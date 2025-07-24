@@ -5,7 +5,7 @@ import aiohttp
 # Bot setup
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix='!', intents=intents)
-
+print("updated!!")
 async def update_bot_bio(bio_text):
     """Update the bot's About Me section"""
     url = "https://discord.com/api/v10/applications/@me"
