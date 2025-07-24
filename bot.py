@@ -54,11 +54,9 @@ async def send_response(message):
 def is_owner_in_control_channel():
     """Custom check to ensure command is from owner and in control channel"""
     async def predicate(ctx):
-        return (
-            await bot.is_owner(ctx.author)
-            and ctx.guild is not None
-            and ctx.channel.id == CONTROL_CHANNEL_ID
-        )
+        is_owner = await bot.is_owner(ctx.author)
+        is_control_channel = ctx.channel.id == CONTROL_CHANNEL_ID
+        return is_owner and is_control_channel
     return commands.check(predicate)
 
 # Command to update bio (optional)
