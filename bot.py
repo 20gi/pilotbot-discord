@@ -85,14 +85,14 @@ async def on_ready():
     print("Status set to: Watching i hate dusekkar")
 
 # --- Bot Commands ---
-@tree.command(name='updatebio', description='update the bot bio (owner only)', guild=CONTROL_GUILD)
+@tree.command(name='updatebio', description='update the bot bio', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()
 async def update_bio_command(interaction: discord.Interaction, new_bio: str):
     await interaction.response.defer() 
     await update_bot_bio(new_bio)
     await interaction.followup.send(f"bio updated to: {new_bio}")
 
-@tree.command(name='setstatus', description='change the bot\'s activity status (owner only)', guild=CONTROL_GUILD)
+@tree.command(name='setstatus', description='change the bot\'s activity status', guild=CONTROL_GUILD)
 @app_commands.choices(status_type=[
     app_commands.Choice(name='Playing', value='playing'),
     app_commands.Choice(name='Watching', value='watching'),
@@ -111,7 +111,7 @@ async def set_status_command(interaction: discord.Interaction, status_type: app_
     await bot.change_presence(status=discord.Status.online, activity=activity)
     await interaction.response.send_message(f"status changed to: {status_type.name} {status_text}")
 
-@tree.command(name='setonline', description='change the bot\'s online status (owner only)', guild=CONTROL_GUILD)
+@tree.command(name='setonline', description='change the bot\'s online status', guild=CONTROL_GUILD)
 @app_commands.choices(online_status=[
     app_commands.Choice(name='Online', value='online'), app_commands.Choice(name='Idle', value='idle'),
     app_commands.Choice(name='Do Not Disturb', value='dnd'), app_commands.Choice(name='Invisible', value='invisible'),
@@ -126,7 +126,7 @@ async def set_online_status(interaction: discord.Interaction, online_status: app
     await bot.change_presence(status=status_map[online_status.value], activity=current_activity)
     await interaction.response.send_message(f"status changed to: {online_status.name}")
 
-@tree.command(name='clearstatus', description='clear the bot\'s activity status (owner only)', guild=CONTROL_GUILD)
+@tree.command(name='clearstatus', description='clear the bot\'s activity status', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()
 async def clear_status_command(interaction: discord.Interaction):
     await bot.change_presence(status=discord.Status.online, activity=None)
