@@ -7,9 +7,11 @@ import aiohttp
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Define the specific server for commands
+# --- Control Server and Channel IDs ---
 CONTROL_SERVER_ID = 1258526802599481375
+CONTROL_CHANNEL_ID = 1311918837528002600
 CONTROL_GUILD = discord.Object(id=CONTROL_SERVER_ID)
+# ------------------------------------
 
 # Command Tree for slash commands
 tree = bot.tree
@@ -36,13 +38,18 @@ async def update_bot_bio(bio_text):
                 error_text = await response.text()
                 print(f"Error: {error_text}")
 
-# Custom check to verify the user is the bot owner
-def is_owner():
+# Custom check to verify the user is the bot owner AND in the correct channel
+def is_owner_and_in_control_channel():
     def predicate(interaction: discord.Interaction) -> bool:
         # Check if the bot's owner_id has been set
         if bot.owner_id is None:
             return False
-        return interaction.user.id == bot.owner_id
+        
+        # Check if the user is the owner AND is in the control channel
+        is_owner = interaction.user.id == bot.owner_id
+        is_control_channel = interaction.channel_id == CONTROL_CHANNEL_ID
+        
+        return is_owner and is_control_channel
     return app_commands.check(predicate)
 
 @bot.event
@@ -66,16 +73,16 @@ async def on_ready():
     print("Status set to: Watching i hate dusekkar")
 
 # Command to update bio
-@tree.command(name='updatebio', description='update the bot bio (me only)', guild=CONTROL_GUILD)
-@is_owner()
+@tree.command(name='updatebio', description='update the bot bio (owner only)', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
 async def update_bio_command(interaction: discord.Interaction, new_bio: str):
     """Command to update bot bio"""
-    await interaction.response.defer() # Acknowledge the command immediately
+    await interaction.response.defer() 
     await update_bot_bio(new_bio)
     await interaction.followup.send(f"bio updated to: {new_bio}")
 
 # Command to change status
-@tree.command(name='setstatus', description='change the bot\'s activity status (me only)', guild=CONTROL_GUILD)
+@tree.command(name='setstatus', description='change the bot\'s activity status (owner only)', guild=CONTROL_GUILD)
 @app_commands.choices(status_type=[
     app_commands.Choice(name='Playing', value='playing'),
     app_commands.Choice(name='Watching', value='watching'),
@@ -83,7 +90,7 @@ async def update_bio_command(interaction: discord.Interaction, new_bio: str):
     app_commands.Choice(name='Streaming', value='streaming'),
     app_commands.Choice(name='Competing in', value='competing'),
 ])
-@is_owner()
+@is_owner_and_in_control_channel()
 async def set_status_command(interaction: discord.Interaction, status_type: app_commands.Choice[str], status_text: str):
     """Command to change bot status"""
     status_map = {
@@ -100,14 +107,14 @@ async def set_status_command(interaction: discord.Interaction, status_type: app_
     await interaction.response.send_message(f"status changed to: {status_type.name} {status_text}")
 
 # Command to set online status
-@tree.command(name='setonline', description='change the bot\'s online status (me only)', guild=CONTROL_GUILD)
+@tree.command(name='setonline', description='change the bot\'s online status (owner only)', guild=CONTROL_GUILD)
 @app_commands.choices(online_status=[
     app_commands.Choice(name='Online', value='online'),
     app_commands.Choice(name='Idle', value='idle'),
     app_commands.Choice(name='Do Not Disturb', value='dnd'),
     app_commands.Choice(name='Invisible', value='invisible'),
 ])
-@is_owner()
+@is_owner_and_in_control_channel()
 async def set_online_status(interaction: discord.Interaction, online_status: app_commands.Choice[str]):
     """Command to change online status"""
     status_map = {
@@ -123,8 +130,8 @@ async def set_online_status(interaction: discord.Interaction, online_status: app
     await interaction.response.send_message(f"status changed to: {online_status.name}")
 
 # Command to clear status
-@tree.command(name='clearstatus', description='clear the bot\'s activity status (me only)', guild=CONTROL_GUILD)
-@is_owner()
+@tree.command(name='clearstatus', description='clear the bot\'s activity status (owner only)', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
 async def clear_status_command(interaction: discord.Interaction):
     """Command to clear the bot's activity status"""
     await bot.change_presence(status=discord.Status.online, activity=None)
@@ -133,8 +140,9 @@ async def clear_status_command(interaction: discord.Interaction):
 # Error handler for slash commands
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    # This will catch failures from the is_owner_and_in_control_channel check
     if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message('you do not have permission to use this command', ephemeral=True)
+        await interaction.response.send_message('you do not have permission to use this command here', ephemeral=True)
     else:
         await interaction.response.send_message('an error occurred', ephemeral=True)
         # Also print the error to the console for debugging
