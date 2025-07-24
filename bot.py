@@ -36,10 +36,24 @@ async def update_bot_bio(bio_text):
                 error_text = await response.text()
                 print(f"Error: {error_text}")
 
+# Custom check to verify the user is the bot owner
+def is_owner():
+    def predicate(interaction: discord.Interaction) -> bool:
+        # Check if the bot's owner_id has been set
+        if bot.owner_id is None:
+            return False
+        return interaction.user.id == bot.owner_id
+    return app_commands.check(predicate)
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
     
+    # Fetch and set the bot owner's ID
+    app_info = await bot.application_info()
+    bot.owner_id = app_info.owner.id
+    print(f"Owner ID set to: {bot.owner_id}")
+
     # Sync the slash commands to the control server
     await tree.sync(guild=CONTROL_GUILD)
     print(f"Synced slash commands for guild: {CONTROL_SERVER_ID}")
@@ -53,7 +67,7 @@ async def on_ready():
 
 # Command to update bio
 @tree.command(name='updatebio', description='update the bot bio (me only)', guild=CONTROL_GUILD)
-@app_commands.checks.is_owner()
+@is_owner()
 async def update_bio_command(interaction: discord.Interaction, new_bio: str):
     """Command to update bot bio"""
     await interaction.response.defer() # Acknowledge the command immediately
@@ -69,7 +83,7 @@ async def update_bio_command(interaction: discord.Interaction, new_bio: str):
     app_commands.Choice(name='Streaming', value='streaming'),
     app_commands.Choice(name='Competing in', value='competing'),
 ])
-@app_commands.checks.is_owner()
+@is_owner()
 async def set_status_command(interaction: discord.Interaction, status_type: app_commands.Choice[str], status_text: str):
     """Command to change bot status"""
     status_map = {
@@ -93,7 +107,7 @@ async def set_status_command(interaction: discord.Interaction, status_type: app_
     app_commands.Choice(name='Do Not Disturb', value='dnd'),
     app_commands.Choice(name='Invisible', value='invisible'),
 ])
-@app_commands.checks.is_owner()
+@is_owner()
 async def set_online_status(interaction: discord.Interaction, online_status: app_commands.Choice[str]):
     """Command to change online status"""
     status_map = {
@@ -110,7 +124,7 @@ async def set_online_status(interaction: discord.Interaction, online_status: app
 
 # Command to clear status
 @tree.command(name='clearstatus', description='clear the bot\'s activity status (me only)', guild=CONTROL_GUILD)
-@app_commands.checks.is_owner()
+@is_owner()
 async def clear_status_command(interaction: discord.Interaction):
     """Command to clear the bot's activity status"""
     await bot.change_presence(status=discord.Status.online, activity=None)
