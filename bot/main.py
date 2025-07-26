@@ -8,6 +8,7 @@ import json
 # Bot setup
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix='!', intents=intents)
+CONFIG_PATH = '/data/options.json'
 
 # --- Control Server and Channel IDs ---
 CONTROL_SERVER_ID = 1258526802599481375
