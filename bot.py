@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import aiohttp
+import os
 
 # Bot setup
 intents = discord.Intents.default()
@@ -149,5 +150,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.response.send_message('an error occurred', ephemeral=True)
         raise error
 
-# Replace 'YOUR_BOT_TOKEN' with your actual bot token
-bot.run('MTM5NzgxNzcxMzkzMzY4NDgyNw.GwogIJ.ZwYkFNa4_upJ7n4m87gv5NxPTRuXOvBOVaOT60')
+# Get token from environment variable
+token = os.getenv('DISCORD_TOKEN')
+if not token:
+    raise ValueError("DISCORD_TOKEN environment variable not set!")
+
+bot.run(token)
