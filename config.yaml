@@ -1,0 +1,14 @@
+# config.yaml
+name: "My Discord Bot"
+version: "1.0.0"
+slug: "my_discord_bot"
+description: "A custom Discord bot running as a Home Assistant addon."
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+options:
+  bot_token: ""
+schema:
+  bot_token: "password"
