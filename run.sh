@@ -1,17 +1,14 @@
-#!/bin/bash
-set -e
+#!/usr/bin/with-contenv bashio
 
-echo "updating..."
+echo "starting bot addon"
 
-git pull origin main
+BOT_TOKEN=$(bashio::config 'bot_token')
 
-echo "stopping bot..."
-docker-compose down
+if [ -z "${BOT_TOKEN}" ]; then
+  bashio::log.error "bot token is not set. please configure the addon."
+  exit 1
+fi
 
-echo "building and starting back up..."
-docker-compose up --build -d
+export BOT_TOKEN
 
-echo "logs:"
-docker-compose logs --tail=20 discord-bot
-
-echo "update complete!"
+python3 /app/main.py
