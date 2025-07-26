@@ -1,6 +1,8 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
+RUN apk add --no-cache build-base
+
 WORKDIR /app
 
 COPY bot/requirements.txt ./
