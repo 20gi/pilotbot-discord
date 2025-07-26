@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 import aiohttp
 import os
+import json
 
 # Bot setup
 intents = discord.Intents.default()
@@ -150,9 +151,27 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.response.send_message('an error occurred', ephemeral=True)
         raise error
 
-# Get token from environment variable
-token = os.getenv('DISCORD_TOKEN')
-if not token:
-    raise ValueError("DISCORD_TOKEN environment variable not set!")
+def get_token_from_config():
+    """Reads the bot token from the Home Assistant options.json file."""
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            config = json.load(f)
+        token = config.get('bot_token')
+        if not token:
+            print("Error: 'bot_token' not found in the configuration file.")
+            return None
+        return token
+    except FileNotFoundError:
+        print(f"Error: Configuration file not found at {CONFIG_PATH}")
+        return None
+    except json.JSONDecodeError:
+        print(f"Error: Could not decode JSON from {CONFIG_PATH}")
+        return None
 
-bot.run(token)
+# Get the token and run the bot
+BOT_TOKEN = get_token_from_config()
+
+if BOT_TOKEN:
+    bot.run(BOT_TOKEN)
+else:
+    print("Bot could not be started due to a token configuration error.")
