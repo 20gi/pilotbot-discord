@@ -1,1 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv2/
+venv/
+
+# Node / Frontend
+node_modules/
+build/
+dist/
+.npm
+
+# Secrets - VERY IMPORTANT
 .env
+config.json
+ssl/
+logs/
+*.log
+
+# IDE / OS files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

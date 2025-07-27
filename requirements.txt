@@ -1,0 +1,15 @@
+# Core dependencies
+discord.py==2.3.2
+flask==3.0.0
+aiohttp==3.9.1
+requests==2.31.0
+
+# Security dependencies
+flask-cors==4.0.0
+flask-limiter==3.5.0
+flask-talisman==1.1.0
+redis==5.0.1
+
+# Production dependencies
+gunicorn==21.2.0
+gevent==23.9.1
