@@ -1,29 +1,75 @@
+# Configuration files
+config.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-env/
-venv2/
-venv/
-
-# Node / Frontend
-node_modules/
 build/
+develop-eggs/
 dist/
-.npm
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Secrets - VERY IMPORTANT
+# Virtual environments
 .env
-config.json
-ssl/
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# React
+web/node_modules/
+web/build/
+web/.env.local
+web/.env.development.local
+web/.env.test.local
+web/.env.production.local
+web/npm-debug.log*
+web/yarn-debug.log*
+web/yarn-error.log*
+
+# Docker
+.dockerignore
+
+# Logs
 logs/
 *.log
 
-# IDE / OS files
-.idea/
-.vscode/
-*.swp
-*~
+# Data directory
+data/
+
+# OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
