@@ -80,12 +80,15 @@ def format_duration(start_time, end_time):
     else:
         return f"{minutes} minutes"
 
-async def send_monitoring_message(message):
+async def send_monitoring_message(message=None, embed=None):
     """Send a message to the monitoring channel"""
     try:
         channel = bot.get_channel(MONITORING_CHANNEL_ID)
         if channel:
-            await channel.send(message)
+            if embed:
+                await channel.send(embed=embed)
+            elif message:
+                await channel.send(message)
         else:
             print(f"Monitoring channel {MONITORING_CHANNEL_ID} not found")
     except Exception as e:
