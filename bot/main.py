@@ -4,15 +4,20 @@ from discord.ext import commands
 import aiohttp
 import os
 import json
+from datetime import datetime, timezone
+import asyncio
 
 # Bot setup
 intents = discord.Intents.default()
+intents.members = True  # Required for member join/leave events
 bot = commands.Bot(command_prefix='!', intents=intents)
 CONFIG_PATH = '/data/options.json'
+TRACKING_DATA_PATH = '/data/lillian_tracking.json'
 
 # --- Control Server and Channel IDs ---
 CONTROL_SERVER_ID = 1258526802599481375
 CONTROL_CHANNEL_ID = 1311918837528002600
+MONITORING_CHANNEL_ID = 1399788089307566111
 CONTROL_GUILD = discord.Object(id=CONTROL_SERVER_ID)
 # ------------------------------------
 
@@ -30,6 +35,163 @@ class WrongChannelError(app_commands.CheckFailure):
     """Exception raised when a command is used in the wrong channel."""
     pass
 # -----------------------------------------
+
+# --- Tracking Data Management ---
+def load_tracking_data():
+    """Load tracking data from JSON file"""
+    try:
+        with open(TRACKING_DATA_PATH, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Initialize with default structure
+        default_data = {
+            "tracked_user_id": None,
+            "current_session": None,
+            "leaderboard": []
+        }
+        save_tracking_data(default_data)
+        return default_data
+    except json.JSONDecodeError:
+        print(f"Error: Could not decode JSON from {TRACKING_DATA_PATH}")
+        return {"tracked_user_id": None, "current_session": None, "leaderboard": []}
+
+def save_tracking_data(data):
+    """Save tracking data to JSON file"""
+    try:
+        with open(TRACKING_DATA_PATH, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving tracking data: {e}")
+
+def format_duration(start_time, end_time):
+    """Calculate and format duration between two timestamps"""
+    start = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+    end = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+    duration = end - start
+    
+    days = duration.days
+    hours, remainder = divmod(duration.seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    
+    if days > 0:
+        return f"{days} days, {hours} hours, {minutes} minutes"
+    elif hours > 0:
+        return f"{hours} hours, {minutes} minutes"
+    else:
+        return f"{minutes} minutes"
+
+async def send_monitoring_message(message):
+    """Send a message to the monitoring channel"""
+    try:
+        channel = bot.get_channel(MONITORING_CHANNEL_ID)
+        if channel:
+            await channel.send(message)
+        else:
+            print(f"Monitoring channel {MONITORING_CHANNEL_ID} not found")
+    except Exception as e:
+        print(f"Error sending monitoring message: {e}")
+
+# --- Member Events ---
+@bot.event
+async def on_member_join(member):
+    """Handle member join events"""
+    tracking_data = load_tracking_data()
+    
+    if tracking_data["tracked_user_id"] and member.id == tracking_data["tracked_user_id"]:
+        join_time = datetime.now(timezone.utc).isoformat()
+        tracking_data["current_session"] = {
+            "join_time": join_time,
+            "user_id": member.id
+        }
+        save_tracking_data(tracking_data)
+        
+        embed = discord.Embed(
+            title="🟢 Lillian Joined",
+            description=f"Lillian has joined the server!",
+            color=0x00ff00,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="User", value=f"{member.mention}", inline=True)
+        embed.add_field(name="Join Time", value=f"<t:{int(datetime.now(timezone.utc).timestamp())}:F>", inline=True)
+        
+        await send_monitoring_message(embed=embed)
+
+@bot.event
+async def on_member_remove(member):
+    """Handle member leave events"""
+    tracking_data = load_tracking_data()
+    
+    if (tracking_data["tracked_user_id"] and 
+        member.id == tracking_data["tracked_user_id"] and 
+        tracking_data["current_session"]):
+        
+        leave_time = datetime.now(timezone.utc).isoformat()
+        session = tracking_data["current_session"]
+        
+        # Calculate duration
+        duration_str = format_duration(session["join_time"], leave_time)
+        
+        # Add to leaderboard
+        leaderboard_entry = {
+            "join_time": session["join_time"],
+            "leave_time": leave_time,
+            "duration": duration_str,
+            "user_id": member.id
+        }
+        
+        tracking_data["leaderboard"].append(leaderboard_entry)
+        tracking_data["current_session"] = None
+        
+        # Sort leaderboard by duration (longest first)
+        tracking_data["leaderboard"].sort(key=lambda x: datetime.fromisoformat(x["leave_time"].replace('Z', '+00:00')) - datetime.fromisoformat(x["join_time"].replace('Z', '+00:00')), reverse=True)
+        
+        save_tracking_data(tracking_data)
+        
+        # Send leave notification
+        embed = discord.Embed(
+            title="🔴 Lillian Left",
+            description=f"Lillian has left the server!",
+            color=0xff0000,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="User", value=f"{member.mention}", inline=True)
+        embed.add_field(name="Duration in Server", value=duration_str, inline=True)
+        embed.add_field(name="Leave Time", value=f"<t:{int(datetime.now(timezone.utc).timestamp())}:F>", inline=True)
+        
+        await send_monitoring_message(embed=embed)
+        
+        # Send updated leaderboard
+        leaderboard_embed = discord.Embed(
+            title="🏆 Updated Lillian's Server Time Leaderboard",
+            description="Longest to shortest server sessions",
+            color=0xffd700,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        # Show top 10 entries
+        for i, entry in enumerate(tracking_data["leaderboard"][:10], 1):
+            join_time = datetime.fromisoformat(entry["join_time"].replace('Z', '+00:00'))
+            leave_time = datetime.fromisoformat(entry["leave_time"].replace('Z', '+00:00'))
+            
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            
+            # Highlight the most recent session (first in sorted list)
+            is_latest = (entry["join_time"] == leaderboard_entry["join_time"])
+            name_prefix = "**✨ " if is_latest else ""
+            name_suffix = " ✨**" if is_latest else ""
+            
+            leaderboard_embed.add_field(
+                name=f"{name_prefix}{medal} Session {i}{name_suffix}",
+                value=f"**Duration:** {entry['duration']}\n"
+                      f"**Joined:** <t:{int(join_time.timestamp())}:d>\n"
+                      f"**Left:** <t:{int(leave_time.timestamp())}:d>",
+                inline=True
+            )
+        
+        total_sessions = len(tracking_data["leaderboard"])
+        leaderboard_embed.set_footer(text=f"Total sessions recorded: {total_sessions} | ✨ = Latest session")
+        
+        await send_monitoring_message(embed=leaderboard_embed)
 
 async def update_bot_bio(bio_text):
     """Update the bot's About Me section"""
@@ -87,7 +249,7 @@ async def on_ready():
     )
     print("Status set to: Watching i hate dusekkar")
 
-# --- Bot Commands ---
+# --- Original Bot Commands ---
 @tree.command(name='updatebio', description='update the bot bio', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()
 async def update_bio_command(interaction: discord.Interaction, new_bio: str):
@@ -134,6 +296,108 @@ async def set_online_status(interaction: discord.Interaction, online_status: app
 async def clear_status_command(interaction: discord.Interaction):
     await bot.change_presence(status=discord.Status.online, activity=None)
     await interaction.response.send_message("status cleared")
+
+# --- New Tracking Commands ---
+@tree.command(name='settrackuser', description='set the user ID to track (will be referred to as Lillian)', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def set_track_user(interaction: discord.Interaction, user_id: str):
+    try:
+        user_id_int = int(user_id)
+        tracking_data = load_tracking_data()
+        tracking_data["tracked_user_id"] = user_id_int
+        save_tracking_data(tracking_data)
+        
+        await interaction.response.send_message(f"now tracking user ID {user_id} as Lillian")
+    except ValueError:
+        await interaction.response.send_message("invalid user ID format", ephemeral=True)
+
+@tree.command(name='lillianstatus', description='check if Lillian is currently in the server', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def lillian_status(interaction: discord.Interaction):
+    tracking_data = load_tracking_data()
+    
+    if not tracking_data["tracked_user_id"]:
+        await interaction.response.send_message("no user is currently being tracked", ephemeral=True)
+        return
+    
+    # Check if user is in server
+    guild = interaction.guild
+    member = guild.get_member(tracking_data["tracked_user_id"])
+    
+    embed = discord.Embed(title="Lillian Status", color=0x3498db)
+    
+    if member:
+        embed.color = 0x00ff00
+        embed.add_field(name="Status", value="🟢 In Server", inline=True)
+        if tracking_data["current_session"]:
+            join_time = datetime.fromisoformat(tracking_data["current_session"]["join_time"].replace('Z', '+00:00'))
+            duration = datetime.now(timezone.utc) - join_time
+            days = duration.days
+            hours, remainder = divmod(duration.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            
+            if days > 0:
+                duration_str = f"{days} days, {hours} hours, {minutes} minutes"
+            elif hours > 0:
+                duration_str = f"{hours} hours, {minutes} minutes"
+            else:
+                duration_str = f"{minutes} minutes"
+            
+            embed.add_field(name="Current Session Duration", value=duration_str, inline=True)
+            embed.add_field(name="Joined", value=f"<t:{int(join_time.timestamp())}:R>", inline=True)
+    else:
+        embed.color = 0xff0000
+        embed.add_field(name="Status", value="🔴 Not in Server", inline=True)
+    
+    embed.add_field(name="Tracked User ID", value=str(tracking_data["tracked_user_id"]), inline=True)
+    
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name='lillianleaderboard', description='show Lillian\'s server time leaderboard', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def lillian_leaderboard(interaction: discord.Interaction):
+    tracking_data = load_tracking_data()
+    
+    if not tracking_data["leaderboard"]:
+        await interaction.response.send_message("no leaderboard data available yet", ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title="🏆 Lillian's Server Time Leaderboard",
+        description="Longest to shortest server sessions",
+        color=0xffd700
+    )
+    
+    # Show top 10 entries
+    for i, entry in enumerate(tracking_data["leaderboard"][:10], 1):
+        join_time = datetime.fromisoformat(entry["join_time"].replace('Z', '+00:00'))
+        leave_time = datetime.fromisoformat(entry["leave_time"].replace('Z', '+00:00'))
+        
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        
+        embed.add_field(
+            name=f"{medal} Session {i}",
+            value=f"**Duration:** {entry['duration']}\n"
+                  f"**Joined:** <t:{int(join_time.timestamp())}:d>\n"
+                  f"**Left:** <t:{int(leave_time.timestamp())}:d>",
+            inline=True
+        )
+    
+    total_sessions = len(tracking_data["leaderboard"])
+    embed.set_footer(text=f"Total sessions recorded: {total_sessions}")
+    
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name='cleartracking', description='clear all tracking data for Lillian', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def clear_tracking(interaction: discord.Interaction):
+    tracking_data = {
+        "tracked_user_id": None,
+        "current_session": None,
+        "leaderboard": []
+    }
+    save_tracking_data(tracking_data)
+    await interaction.response.send_message("tracking data cleared")
 
 # --- Updated Error Handler ---
 @tree.error
