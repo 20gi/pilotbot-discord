@@ -1,15 +1,24 @@
-# Core dependencies
-discord.py==2.3.2
-flask==3.0.0
-aiohttp==3.9.1
-requests==2.31.0
+# -- Core & Web Framework --
+# Using the compatible release operator (~=) allows for patch and security updates
+# but prevents minor version updates that could introduce breaking changes.
+# For example, ~=0.104.1 is equivalent to >=0.104.1, <0.105.0.
+discord.py~=2.3.2
+fastapi~=0.104.1
+uvicorn[standard]~=0.24.0
 
-# Security dependencies
-flask-cors==4.0.0
-flask-limiter==3.5.0
-flask-talisman==1.1.0
-redis==5.0.1
+# -- Security & Authentication --
+# python-jose will manage its own cryptography and PyJWT versions.
+# passlib[bcrypt] will manage its own bcrypt version.
+python-jose[cryptography]~=3.3.0
+passlib[bcrypt]~=1.7.4
 
-# Production dependencies
-gunicorn==21.2.0
-gevent==23.9.1
+# -- Utilities & Helpers --
+aiohttp~=3.9.1
+httpx~=0.25.2
+python-multipart~=0.0.6
+python-dotenv~=1.0.0
+slowapi~=0.1.9
+structlog~=23.2.0
+psutil~=5.9.6
+aiofiles~=23.2.1
+PyJWT~=2.10.0

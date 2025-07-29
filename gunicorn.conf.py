@@ -1,59 +1,36 @@
-# Gunicorn configuration for production
 import multiprocessing
 import os
 
 # Server socket
-bind = "0.0.0.0:5000"
-backlog = 2048
+# Bind to all network interfaces on port 8000
+bind = os.environ.get("GUNICORN_BIND", "0.0.0.0:8000")
 
 # Worker processes
-workers = multiprocessing.cpu_count() * 2 + 1
-worker_class = "gevent"
-worker_connections = 1000
-max_requests = 1000
-max_requests_jitter = 50
-preload_app = True
-timeout = 30
-keepalive = 2
+# A common formula is (2 * number_of_cpu_cores) + 1
+workers = int(os.environ.get("GUNICORN_WORKERS", (multiprocessing.cpu_count() * 2) + 1))
 
-# Security
-limit_request_line = 4094
-limit_request_fields = 100
-limit_request_field_size = 8190
+# Worker class
+# Use the Uvicorn worker for ASGI applications like FastAPI
+worker_class = "uvicorn.workers.UvicornWorker"
 
 # Logging
-accesslog = "/app/logs/access.log"
-errorlog = "/app/logs/error.log"
-loglevel = "info"
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
+# - directs Gunicorn's access logs to stdout
+# - sets the error log level
+accesslog = "-"
+errorlog = "-"
+loglevel = os.environ.get("GUNICORN_LOGLEVEL", "info")
 
 # Process naming
-proc_name = "discord-bot-control"
+# Makes it easier to identify Gunicorn processes in `ps` or `htop`
+proc_name = "secure_discord_bot_web"
 
-# Server mechanics
-daemon = False
-pidfile = "/tmp/gunicorn.pid"
-user = None
-group = None
-tmp_upload_dir = None
+# Reload
+# Set to True for development to auto-reload on code changes.
+# In production, this should be False.
+# This can be overridden by the --reload flag on the command line.
+reload = os.environ.get("GUNICORN_RELOAD", "false").lower() == "true"
 
-# SSL (uncomment and configure for HTTPS)
-# keyfile = "/path/to/keyfile"
-# certfile = "/path/to/certfile"
-# ssl_version = 2
-# ciphers = "ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS"
-
-def post_fork(server, worker):
-    server.log.info("Worker spawned (pid: %s)", worker.pid)
-
-def pre_fork(server, worker):
-    pass
-
-def when_ready(server):
-    server.log.info("Server is ready. Spawning workers")
-
-def worker_int(worker):
-    worker.log.info("worker received INT or QUIT signal")
-
-def on_exit(server):
-    server.log.info("Server is shutting down")
+# Preload application
+# Loads the application code before forking worker processes.
+# Can save some RAM and speed up server startup.
+preload_app = True
