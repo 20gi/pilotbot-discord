@@ -109,8 +109,8 @@ async def on_member_join(member):
         save_tracking_data(tracking_data)
         
         embed = discord.Embed(
-            title="🟢 Lillian Joined",
-            description=f"Lillian has joined the server!",
+            title="🟢 Lillian's train has arrived!",
+            description="Rejoyce! Rejoyce!",
             color=0x00ff00,
             timestamp=datetime.now(timezone.utc)
         )
@@ -152,8 +152,8 @@ async def on_member_remove(member):
         
         # Send leave notification
         embed = discord.Embed(
-            title="🔴 Lillian Left",
-            description=f"Lillian has left the server!",
+            title="🔴 Lillian's train has departed",
+            description="The server will now be dead for about a week.",
             color=0xff0000,
             timestamp=datetime.now(timezone.utc)
         )
