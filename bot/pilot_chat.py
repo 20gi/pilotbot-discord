@@ -37,6 +37,7 @@ class PilotChatCog(commands.Cog):
         # Register slash command to the guild
         try:
             self.bot.tree.add_command(self.pilotmode, guild=self.control_guild)
+            self.bot.tree.add_command(self.pilotstyle, guild=self.control_guild)
         except Exception as e:
             logging.debug(f"pilot_chat: add_command duplicate or error ignored: {e}")
 
