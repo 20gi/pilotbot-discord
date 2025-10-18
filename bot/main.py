@@ -287,19 +287,30 @@ async def on_ready():
     bot.owner_id = app_info.owner.id
     print(f"Owner ID set to: {bot.owner_id}")
 
-    # Setup Pilot Chat cog using config.yaml
-    def _load_yaml_options():
+    # Setup Pilot Chat cog using Home Assistant options first, fallback to config.yaml
+    def _load_options():
+        # Primary: Home Assistant passes options to /data/options.json
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            return data
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Failed to load {CONFIG_PATH}: {e}")
+
+        # Fallback: local dev via config.yaml
         try:
             with open('config.yaml', 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f) or {}
-            return data.get('options', {})
+                y = yaml.safe_load(f) or {}
+            return y.get('options', {})
         except FileNotFoundError:
             return {}
         except Exception as e:
             print(f"Failed to load config.yaml: {e}")
             return {}
 
-    options = _load_yaml_options()
+    options = _load_options()
     pilot_config = {
         'pilot_enabled': bool(options.get('pilot_enabled', False)),
         'pilot_history_limit': int(options.get('pilot_history_limit', 300)),
