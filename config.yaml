@@ -14,6 +14,7 @@ options:
   pilot_history_limit: 300
   pilot_response_channel_id: ""
   pilot_enabled: false
+  pilot_style_mode: "default"
 schema:
   bot_token: "password"
   chutes_api_key: "password"
@@ -21,3 +22,4 @@ schema:
   pilot_history_limit: "int"
   pilot_response_channel_id: "str?"
   pilot_enabled: "bool"
+  pilot_style_mode: "str"

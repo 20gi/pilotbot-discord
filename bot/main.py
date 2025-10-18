@@ -330,6 +330,7 @@ async def on_ready():
         'chutes_model': options.get('chutes_model', 'deepseek-ai/DeepSeek-V3-0324'),
         'chutes_api_key': options.get('chutes_api_key') or os.getenv('CHUTES_API_KEY'),
         'pilot_response_channel_id': parsed_channel,
+        'pilot_style_mode': options.get('pilot_style_mode', 'default'),
     }
 
     # Print Chutes API key status (masked by default)

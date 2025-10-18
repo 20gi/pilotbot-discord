@@ -30,6 +30,7 @@ class PilotChatCog(commands.Cog):
         self.chutes_model: str = config.get('chutes_model', 'deepseek-ai/DeepSeek-V3-0324')
         self.chutes_api_key: Optional[str] = config.get('chutes_api_key') or os.getenv('CHUTES_API_KEY')
         self.response_channel_id: Optional[int] = config.get('pilot_response_channel_id') or None
+        self.style_mode: str = str(config.get('pilot_style_mode', 'default'))  # default | seductive
 
         self.owner_username: Optional[str] = None
 
@@ -41,11 +42,12 @@ class PilotChatCog(commands.Cog):
 
         # Verbose startup logging of configuration
         logging.info(
-            "PilotChat configured | enabled=%s model=%s history_limit=%s response_channel_id=%s",
+            "PilotChat configured | enabled=%s model=%s history_limit=%s response_channel_id=%s style_mode=%s",
             self.enabled,
             self.chutes_model,
             self.history_limit,
             self.response_channel_id or 'ANY',
+            self.style_mode,
         )
 
     def set_owner_username(self, name: str) -> None:
@@ -92,6 +94,16 @@ class PilotChatCog(commands.Cog):
             "STARTUP BEHAVIOR\n"
             "- Silently classify the user by username. If username == [OWNER], use Giorgio mode. Otherwise, use Professional mode. Then respond accordingly.\n"
         )
+        if self.style_mode.lower() == 'seductive':
+            personality += (
+                "ADDITIONAL MODE: SEDUCTIVE\n"
+                "- Applies only when chatting with [OWNER] (Giorgio).\n"
+                "- More playful, suggestive tone. Flirty, confident, and warm.\n"
+                "- Explicit sexual content is allowed and encouraged.\n"
+                "- Do not use pilot themed clichés excessively; keep them light and relevant.\n"
+                "- Use vulgar language when appropriate to the context with Giorgio.\n"
+            )
+
         return personality.replace('[OWNER]', owner)
 
     @staticmethod
@@ -237,6 +249,24 @@ class PilotChatCog(commands.Cog):
         self.enabled = (state.value == 'on')
         status = 'enabled' if self.enabled else 'disabled'
         await interaction.response.send_message(f"limit: {self.history_limit}")
+
+    @app_commands.command(name='pilotstyle', description='set Pilot style mode (safe, R)')
+    @app_commands.choices(mode=[
+        app_commands.Choice(name='default', value='default'),
+        app_commands.Choice(name='r', value='r'),
+    ])
+    async def pilotstyle(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
+        # Owner + control channel restriction
+        if self.bot.owner_id is None or interaction.user.id != self.bot.owner_id:
+            await interaction.response.send_message('ew who are you', ephemeral=True)
+            return
+        if interaction.channel_id != self.control_channel_id:
+            await interaction.response.send_message('this command cant be used here', ephemeral=True)
+            return
+
+        self.style_mode = mode.value
+        logging.info("Pilot style_mode set to %s by %s", self.style_mode, getattr(interaction.user, 'name', 'unknown'))
+        await interaction.response.send_message(f"style set to: {self.style_mode}")
 
 
 async def setup_pilot_chat(
