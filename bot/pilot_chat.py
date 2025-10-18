@@ -190,7 +190,7 @@ class PilotChatCog(commands.Cog):
 
         self.enabled = (state.value == 'on')
         status = 'enabled' if self.enabled else 'disabled'
-        await interaction.response.send_message(f"Pilot chatbot {status}. History limit: {self.history_limit}")
+        await interaction.response.send_message(f"limit: {self.history_limit}")
 
 
 def setup_pilot_chat(
