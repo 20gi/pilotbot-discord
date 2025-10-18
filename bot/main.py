@@ -315,12 +315,21 @@ async def on_ready():
             return {}
 
     options = _load_options()
+    # Parse channel id safely from string to avoid precision loss
+    raw_channel = options.get('pilot_response_channel_id')
+    parsed_channel = None
+    if raw_channel not in (None, "", 0, "0"):
+        try:
+            parsed_channel = int(str(raw_channel))
+        except Exception as e:
+            print(f"Invalid pilot_response_channel_id '{raw_channel}': {e}")
+
     pilot_config = {
         'pilot_enabled': bool(options.get('pilot_enabled', False)),
         'pilot_history_limit': int(options.get('pilot_history_limit', 300)),
         'chutes_model': options.get('chutes_model', 'deepseek-ai/DeepSeek-V3-0324'),
         'chutes_api_key': options.get('chutes_api_key') or os.getenv('CHUTES_API_KEY'),
-        'pilot_response_channel_id': int(options.get('pilot_response_channel_id') or 0) or None,
+        'pilot_response_channel_id': parsed_channel,
     }
 
     # Print Chutes API key status (masked by default)

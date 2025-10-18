@@ -12,12 +12,12 @@ options:
   chutes_api_key: ""
   chutes_model: "deepseek-ai/DeepSeek-V3-0324"
   pilot_history_limit: 300
-  pilot_response_channel_id: 0
+  pilot_response_channel_id: ""
   pilot_enabled: false
 schema:
   bot_token: "password"
   chutes_api_key: "password"
   chutes_model: "str"
   pilot_history_limit: "int"
-  pilot_response_channel_id: "int?"
+  pilot_response_channel_id: "str?"
   pilot_enabled: "bool"
