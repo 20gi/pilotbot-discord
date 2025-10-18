@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import List, Dict, Optional
 
 import aiohttp
@@ -34,9 +35,8 @@ class PilotChatCog(commands.Cog):
         # Register slash command to the guild
         try:
             self.bot.tree.add_command(self.pilotmode, guild=self.control_guild)
-        except Exception:
-            # If added twice across reloads, ignore
-            pass
+        except Exception as e:
+            logging.debug(f"pilot_chat: add_command duplicate or error ignored: {e}")
 
     def set_owner_username(self, name: str) -> None:
         self.owner_username = name
@@ -150,7 +150,8 @@ class PilotChatCog(commands.Cog):
             try:
                 async for m in message.channel.history(limit=self.history_limit, before=message, oldest_first=True):
                     history.append(m)
-            except Exception:
+            except Exception as e:
+                logging.warning(f"pilot_chat: failed reading history: {e}")
                 history = []
 
             chat_messages: List[Dict[str, str]] = [
@@ -167,12 +168,12 @@ class PilotChatCog(commands.Cog):
                 reply = await self._call_llm(chat_messages)
                 if reply:
                     await message.reply(reply, mention_author=False)
-            except Exception as e:
+            except Exception:
                 try:
                     await message.reply("*no response...*")
                 except Exception:
                     pass
-                print(f"Pilot LLM error: {e}")
+                logging.exception("Pilot LLM error")
 
     @app_commands.command(name='pilotmode', description='enable or disable pilot mode')
     @app_commands.choices(state=[
