@@ -251,10 +251,10 @@ class PilotChatCog(commands.Cog):
         status = 'enabled' if self.enabled else 'disabled'
         await interaction.response.send_message(f"limit: {self.history_limit}")
 
-    @app_commands.command(name='pilotstyle', description='set Pilot style mode (safe, R)')
+    @app_commands.command(name='pilotstyle', description='set pilot style mode (safe, secretmode)')
     @app_commands.choices(mode=[
         app_commands.Choice(name='default', value='default'),
-        app_commands.Choice(name='r', value='r'),
+        app_commands.Choice(name='secretmode', value='secretmode'),
     ])
     async def pilotstyle(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
         # Owner + control channel restriction
