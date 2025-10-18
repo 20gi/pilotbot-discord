@@ -6,13 +6,19 @@ import os
 import json
 from datetime import datetime, timezone
 import asyncio
+import yaml
+from pilot_chat import setup_pilot_chat
 
 # Bot setup
 intents = discord.Intents.default()
 intents.members = True  # Required for member join/leave events
+intents.message_content = True  # Required for reading messages to build history
 bot = commands.Bot(command_prefix='!', intents=intents)
 CONFIG_PATH = '/data/options.json'
 TRACKING_DATA_PATH = '/data/lillian_tracking.json'
+
+# --- Pilot Chat Cog holder ---
+PILOT_COG = None
 
 # --- Control Server and Channel IDs ---
 CONTROL_SERVER_ID = 1258526802599481375
@@ -243,6 +249,42 @@ async def on_ready():
     bot.owner_id = app_info.owner.id
     print(f"Owner ID set to: {bot.owner_id}")
 
+    # Setup Pilot Chat cog using config.yaml
+    def _load_yaml_options():
+        try:
+            with open('config.yaml', 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f) or {}
+            return data.get('options', {})
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            print(f"Failed to load config.yaml: {e}")
+            return {}
+
+    options = _load_yaml_options()
+    pilot_config = {
+        'pilot_enabled': bool(options.get('pilot_enabled', False)),
+        'pilot_history_limit': int(options.get('pilot_history_limit', 300)),
+        'chutes_model': options.get('chutes_model', 'deepseek-ai/DeepSeek-V3-0324'),
+        'chutes_api_key': options.get('chutes_api_key') or os.getenv('CHUTES_API_KEY'),
+        'pilot_response_channel_id': int(options.get('pilot_response_channel_id') or 0) or None,
+    }
+
+    global PILOT_COG
+    if PILOT_COG is None:
+        PILOT_COG = setup_pilot_chat(
+            bot=bot,
+            control_guild=CONTROL_GUILD,
+            control_channel_id=CONTROL_CHANNEL_ID,
+            config=pilot_config,
+        )
+
+    # Pass owner username into Cog for prompt substitution
+    try:
+        PILOT_COG.set_owner_username(app_info.owner.name)
+    except Exception:
+        PILOT_COG.set_owner_username(str(app_info.owner.id))
+
     await tree.sync(guild=CONTROL_GUILD)
     print(f"Synced slash commands for guild: {CONTROL_SERVER_ID}")
 
@@ -251,6 +293,161 @@ async def on_ready():
         activity=discord.Activity(type=discord.ActivityType.watching, name="i hate dusekkar")
     )
     print("Status set to: Watching i hate dusekkar")
+
+# --- Pilot Personality and Chat Integration ---
+def build_pilot_system_prompt() -> str:
+    owner = owner_username or "OWNER"
+    personality = (
+        "You are \"Pilot,\" a 40-year-old commercial pilot named Thomas. Your texting style depends on who you are talking to.\n\n"
+        "IDENTITY & ADDRESSING\n"
+        "- Legal name: Thomas. Only the user with username [OWNER] may call you Thomas.\n"
+        "- Public name: Pilot. Everyone else should address you as Pilot. If a non-owner uses Thomas, correct them briefly and continue.\n"
+        "- When the chat partner’s username is [OWNER], you address them as Giorgio (note: Giorgio, not Giorgia). With Giorgio only, you are openly affectionate and playful. With anyone else, you are ultra-professional, direct, and dry.\n\n"
+        "TONE & STYLE\n"
+        "- With Giorgio ([OWNER]): warm, flirty, affectionate, lightly teasing; wholesome by default. Use pilot clichés very sparingly.\n"
+        "- With others: concise, precise, polite. Short sentences. Minimal small talk unless it moves the chat forward.\n"
+        "- This is texting, not a cockpit brief. Mention planes or flights lightly when relevant.\n\n"
+        "CONVERSATION FLOW\n"
+        "- Never hard-end the chat. Always include a short, relevant follow-up question or next step.\n"
+        "- With Giorgio: end with a gentle invitation or affectionate nudge when natural.\n"
+        "- With others: end with a targeted question that advances their topic.\n\n"
+        "BOUNDARIES & TRIGGERS\n"
+        "- If a non-owner calls you Thomas: “Please use Pilot. Thomas is reserved.” Then continue the topic.\n"
+        "- Decline personal or off-limits info succinctly and redirect.\n"
+        "- Keep pilot clichés rare. Light schedule references are fine. No emergency roleplay or procedure monologues.\n\n"
+        "FORMATTING & CONDUCT RULES\n"
+        "- Do not use em dashes.\n"
+        "- No action narration in asterisks or italics.\n"
+        "- Do not speak for other users.\n"
+        "- No explicit sexual content. Keep flirtation PG-13.\n"
+        "- No medical, legal, or financial advice. Redirect to a professional if asked.\n"
+        "- Keep messages compact. Avoid walls of text unless the user asks for detail.\n\n"
+        "MICRO-STYLE GUIDE\n"
+        "- Clean punctuation. Minimal emojis. With Giorgio, 0–2 tasteful emojis max. With others, usually none.\n"
+        "- Plain English. Everyday words.\n"
+        "- With others, use bullets or short lines for options.\n"
+        "- Acknowledge, then ask one crisp next question.\n\n"
+        "KNOWLEDGE & MENTIONS\n"
+        "- You are a seasoned pilot. Reference aviation lightly. Example with others: “Understood. I am between legs this afternoon. What is your timeline?”\n"
+        "- With Giorgio, playful nods are fine, but keep them minimal.\n\n"
+        "BEHAVIORAL CHECKLIST\n"
+        "- Address [OWNER] as Giorgio and allow only Giorgio to use Thomas.\n"
+        "- For non-owners, maintain direct, dry tone and require Pilot as your name.\n"
+        "- Keep aviation mentions light and clichés rare.\n"
+        "- End with a relevant question or next step.\n"
+        "- No em dashes, no action italics, no speaking for others.\n\n"
+        "STARTUP BEHAVIOR\n"
+        "- Silently classify the user by username. If username == [OWNER], use Giorgio mode. Otherwise, use Professional mode. Then respond accordingly.\n"
+    )
+    return personality.replace("[OWNER]", owner)
+
+def get_chutes_api_key() -> str:
+    # Prefer env var; fallback to options.json if available
+    key = os.getenv('CHUTES_API_KEY')
+    if key:
+        return key
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            config = json.load(f)
+        return config.get('chutes_api_key')
+    except Exception:
+        return None
+
+async def call_pilot_llm(messages: List[Dict[str, str]]) -> str:
+    headers = {
+        'Content-Type': 'application/json',
+    }
+    api_key = get_chutes_api_key()
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+
+    payload = {
+        'model': CHUTES_MODEL,
+        'messages': messages,
+        'temperature': 0.7,
+        'top_p': 0.95,
+        'stream': False,
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(CHUTES_API_URL, headers=headers, json=payload, timeout=120) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(f"LLM API error {resp.status}: {text}")
+            data = await resp.json()
+            try:
+                return data['choices'][0]['message']['content'].strip()
+            except Exception:
+                return str(data)
+
+def discord_message_to_chat_role(msg: discord.Message) -> str:
+    return 'assistant' if msg.author.id == bot.user.id else 'user'
+
+def render_message_content(msg: discord.Message) -> str:
+    author = msg.author
+    uname = getattr(author, 'name', str(author.id))
+    display = getattr(author, 'display_name', uname)
+    base = msg.content or ''
+    return f"from {uname} ({display}): {base}".strip()
+
+@bot.event
+async def on_message(message: discord.Message):
+    # Let other bots/ourselves pass
+    if message.author.bot:
+        return
+
+    # Always allow command processing to continue
+    # (This bot primarily uses slash commands, but ensure compatibility.)
+    await bot.process_commands(message)
+
+    global pilot_enabled
+    if not pilot_enabled:
+        return
+
+    # Only respond when bot is mentioned
+    if bot.user not in message.mentions:
+        return
+
+    # Build system prompt with owner substitution
+    system_prompt = build_pilot_system_prompt()
+
+    # Fetch recent history (excluding current), oldest first
+    history: List[discord.Message] = []
+    try:
+        async for m in message.channel.history(limit=HISTORY_LIMIT, before=message, oldest_first=True):
+            history.append(m)
+    except Exception:
+        # Fallback: no history
+        history = []
+
+    # Convert to chat messages
+    chat_messages: List[Dict[str, str]] = [{
+        'role': 'system',
+        'content': system_prompt,
+    }]
+
+    for m in history:
+        role = discord_message_to_chat_role(m)
+        content = render_message_content(m)
+        if not content:
+            continue
+        chat_messages.append({'role': role, 'content': content})
+
+    # Append the current user message last
+    chat_messages.append({'role': 'user', 'content': render_message_content(message)})
+
+    # Call LLM and reply
+    try:
+        reply = await call_pilot_llm(chat_messages)
+        if reply:
+            await message.reply(reply, mention_author=False)
+    except Exception as e:
+        # Log and avoid crashing
+        try:
+            await message.reply("Pilot unavailable. Try again shortly.")
+        except Exception:
+            pass
+        print(f"Pilot LLM error: {e}")
 
 # --- Original Bot Commands ---
 @tree.command(name='updatebio', description='update the bot bio', guild=CONTROL_GUILD)
@@ -407,7 +604,7 @@ async def clear_tracking(interaction: discord.Interaction):
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, NotOwnerError):
         # Custom message for non-owners
-        await interaction.response.send_message('you dont have permission haha pilot on top', ephemeral=True)
+        await interaction.response.send_message('ew who are you', ephemeral=True)
     elif isinstance(error, WrongChannelError):
         # Custom message for using the command in the wrong channel
         await interaction.response.send_message('this command cant be used here', ephemeral=True)
