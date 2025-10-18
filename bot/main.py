@@ -35,6 +35,10 @@ tree = bot.tree
 
 print("updated!!")
 
+# Configure basic logging if not already configured (HA addons often have none)
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+
 # --- Owner Status Tracking Variables ---
 owner_status_sync_enabled = False
 bot_original_activity = None

@@ -38,6 +38,15 @@ class PilotChatCog(commands.Cog):
         except Exception as e:
             logging.debug(f"pilot_chat: add_command duplicate or error ignored: {e}")
 
+        # Verbose startup logging of configuration
+        logging.info(
+            "PilotChat configured | enabled=%s model=%s history_limit=%s response_channel_id=%s",
+            self.enabled,
+            self.chutes_model,
+            self.history_limit,
+            self.response_channel_id or 'ANY',
+        )
+
     def set_owner_username(self, name: str) -> None:
         self.owner_username = name
 
@@ -133,12 +142,26 @@ class PilotChatCog(commands.Cog):
         if not self.enabled:
             return
 
-        # Optional restriction to a single channel
-        if self.response_channel_id and message.channel.id != int(self.response_channel_id):
+        # Only proceed if the bot is mentioned
+        if self.bot.user not in message.mentions:
             return
 
-        # Only respond when the bot is mentioned
-        if self.bot.user not in message.mentions:
+        # Log ping details always
+        logging.info(
+            "Pilot pinged | channel_id=%s author=%s#%s content_len=%d",
+            getattr(message.channel, 'id', 'unknown'),
+            getattr(message.author, 'name', 'unknown'),
+            getattr(message.author, 'discriminator', ''),
+            len(message.content or ''),
+        )
+
+        # Optional restriction to a single channel
+        if self.response_channel_id and message.channel.id != int(self.response_channel_id):
+            logging.info(
+                "Pilot ignoring ping in channel %s (configured response_channel_id=%s)",
+                message.channel.id,
+                self.response_channel_id,
+            )
             return
 
         # Show typing while we prepare context and wait for the model
@@ -165,6 +188,12 @@ class PilotChatCog(commands.Cog):
             chat_messages.append({'role': 'user', 'content': self._render(message)})
 
             try:
+                logging.info(
+                    "Pilot sending LLM request | model=%s history_len=%d channel_id=%s",
+                    self.chutes_model,
+                    len(chat_messages) - 1,  # exclude system
+                    getattr(message.channel, 'id', 'unknown'),
+                )
                 reply = await self._call_llm(chat_messages)
                 if reply:
                     await message.reply(reply, mention_author=False)
