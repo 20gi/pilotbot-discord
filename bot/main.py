@@ -588,7 +588,7 @@ async def clear_tracking(interaction: discord.Interaction):
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, NotOwnerError):
         # Custom message for non-owners
-        await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=True)
+        await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=False)
     elif isinstance(error, WrongChannelError):
         # Custom message for using the command in the wrong channel
         await interaction.response.send_message('this command cant be used here', ephemeral=True)

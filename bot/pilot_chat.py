@@ -259,7 +259,7 @@ class PilotChatCog(commands.Cog):
     async def pilotstyle(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
         # Owner + control channel restriction
         if self.bot.owner_id is None or interaction.user.id != self.bot.owner_id:
-            await interaction.response.send_message('ew who are you', ephemeral=True)
+            await interaction.response.send_message('ew who are you', ephemeral=False)
             return
         if interaction.channel_id != self.control_channel_id:
             await interaction.response.send_message('this command cant be used here', ephemeral=True)
