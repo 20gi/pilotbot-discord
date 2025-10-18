@@ -309,7 +309,7 @@ async def on_ready():
 
     global PILOT_COG
     if PILOT_COG is None:
-        PILOT_COG = setup_pilot_chat(
+        PILOT_COG = await setup_pilot_chat(
             bot=bot,
             control_guild=CONTROL_GUILD,
             control_channel_id=CONTROL_CHANNEL_ID,

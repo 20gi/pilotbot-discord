@@ -193,12 +193,13 @@ class PilotChatCog(commands.Cog):
         await interaction.response.send_message(f"limit: {self.history_limit}")
 
 
-def setup_pilot_chat(
+async def setup_pilot_chat(
     bot: commands.Bot,
     control_guild: discord.Object,
     control_channel_id: int,
     config: Dict,
 ) -> PilotChatCog:
     cog = PilotChatCog(bot, config, control_guild, control_channel_id)
-    bot.add_cog(cog)
+    # discord.py version in use exposes add_cog as a coroutine
+    await bot.add_cog(cog)
     return cog
