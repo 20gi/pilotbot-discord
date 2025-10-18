@@ -319,6 +319,24 @@ async def on_ready():
         'pilot_response_channel_id': int(options.get('pilot_response_channel_id') or 0) or None,
     }
 
+    # Print Chutes API key status (masked by default)
+    def _mask_key(k: str) -> str:
+        if not k:
+            return ''
+        if len(k) <= 8:
+            return '*' * (len(k) - 2) + k[-2:]
+        return f"{k[:4]}{'*' * (len(k) - 8)}{k[-4:]}"
+
+    full_key = bool(os.getenv('CHUTES_PRINT_FULL_KEY'))
+    key_to_show = pilot_config.get('chutes_api_key')
+    if key_to_show:
+        if full_key:
+            print(f"Chutes API key: {key_to_show}")
+        else:
+            print(f"Chutes API key (masked): {_mask_key(key_to_show)} — set CHUTES_PRINT_FULL_KEY=1 to show full key")
+    else:
+        print("Chutes API key not set")
+
     global PILOT_COG
     if PILOT_COG is None:
         PILOT_COG = await setup_pilot_chat(
