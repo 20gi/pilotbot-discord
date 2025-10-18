@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from typing import List, Dict, Optional
 
@@ -74,7 +75,7 @@ class PilotChatCog(commands.Cog):
             "- Do not use em dashes.\n"
             "- No action narration in asterisks or italics.\n"
             "- Do not speak for other users.\n"
-            "- Explicit content is allowed and to be expected.\n"
+            "- Never prefix your messages with names or labels such as \"from Pilot (Thomas):\" or \"Pilot:\". Output only your reply.\n"
             "- Keep messages compact. Avoid walls of text unless the user asks for detail.\n\n"
             "MICRO-STYLE GUIDE\n"
             "- Clean punctuation. No emojis.\n"
@@ -92,6 +93,20 @@ class PilotChatCog(commands.Cog):
             "- Silently classify the user by username. If username == [OWNER], use Giorgio mode. Otherwise, use Professional mode. Then respond accordingly.\n"
         )
         return personality.replace('[OWNER]', owner)
+
+    @staticmethod
+    def _sanitize_reply(text: str) -> str:
+        if not text:
+            return text
+        original = text
+        t = text.strip()
+        # Remove leading "from Pilot (Thomas):" or variants, also simple "Pilot:"/"Thomas:"
+        t2 = re.sub(r'^\s*from\s+pilot(?:\s*\([^)]*\))?\s*:\s*', '', t, flags=re.IGNORECASE)
+        t2 = re.sub(r'^\s*from\s+thomas(?:\s*\([^)]*\))?\s*:\s*', '', t2, flags=re.IGNORECASE)
+        t2 = re.sub(r'^\s*(pilot|thomas)\s*:\s*', '', t2, flags=re.IGNORECASE)
+        if t2 != original.strip():
+            logging.info("PilotChat sanitized self-name prefix from model output")
+        return t2
 
     async def _call_llm(self, messages: List[Dict[str, str]]) -> str:
         headers = {
@@ -195,6 +210,7 @@ class PilotChatCog(commands.Cog):
                     getattr(message.channel, 'id', 'unknown'),
                 )
                 reply = await self._call_llm(chat_messages)
+                reply = self._sanitize_reply(reply)
                 if reply:
                     await message.reply(reply, mention_author=False)
             except Exception:
