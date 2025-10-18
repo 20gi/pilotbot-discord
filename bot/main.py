@@ -9,9 +9,11 @@ import asyncio
 import yaml
 from pilot_chat import setup_pilot_chat
 
+# silly messages version
 # Bot setup
 intents = discord.Intents.default()
 intents.members = True  # Required for member join/leave events
+intents.presences = True  # Required for tracking owner's presence
 intents.message_content = True  # Required for reading messages to build history
 bot = commands.Bot(command_prefix='!', intents=intents)
 CONFIG_PATH = '/data/options.json'
@@ -31,6 +33,11 @@ CONTROL_GUILD = discord.Object(id=CONTROL_SERVER_ID)
 tree = bot.tree
 
 print("updated!!")
+
+# --- Owner Status Tracking Variables ---
+owner_status_sync_enabled = False
+bot_original_activity = None
+bot_was_manually_set_offline = False
 
 # --- Custom Exceptions for Error Handling ---
 class NotOwnerError(app_commands.CheckFailure):
@@ -99,6 +106,36 @@ async def send_monitoring_message(message=None, embed=None):
             print(f"Monitoring channel {MONITORING_CHANNEL_ID} not found")
     except Exception as e:
         print(f"Error sending monitoring message: {e}")
+
+# --- Owner Presence Tracking ---
+@bot.event
+async def on_presence_update(before, after):
+    """Handle presence updates to sync bot status with owner status"""
+    global owner_status_sync_enabled, bot_original_activity, bot_was_manually_set_offline
+    
+    # Only track the owner's presence
+    if after.id != bot.owner_id or not owner_status_sync_enabled:
+        return
+    
+    # Check if owner went offline
+    if before.status != discord.Status.offline and after.status == discord.Status.offline:
+        print(f"Owner went offline, setting bot to invisible")
+        # Store current activity before going offline
+        if bot.user:
+            guild = bot.get_guild(CONTROL_SERVER_ID)
+            if guild and guild.me:
+                bot_original_activity = guild.me.activity
+        
+        await bot.change_presence(status=discord.Status.invisible, activity=None)
+        bot_was_manually_set_offline = False
+        
+    # Check if owner came back online
+    elif before.status == discord.Status.offline and after.status != discord.Status.offline:
+        print(f"Owner came online, setting bot back to online")
+        # Restore original activity or set default
+        activity = bot_original_activity or discord.Activity(type=discord.ActivityType.watching, name="i hate dusekkar")
+        await bot.change_presence(status=discord.Status.online, activity=activity)
+        bot_was_manually_set_offline = False
 
 # --- Member Events ---
 @bot.event
@@ -467,6 +504,8 @@ async def update_bio_command(interaction: discord.Interaction, new_bio: str):
 ])
 @is_owner_and_in_control_channel()
 async def set_status_command(interaction: discord.Interaction, status_type: app_commands.Choice[str], status_text: str):
+    global bot_original_activity, bot_was_manually_set_offline
+    
     status_map = {
         'playing': discord.ActivityType.playing, 'watching': discord.ActivityType.watching,
         'listening': discord.ActivityType.listening, 'streaming': discord.ActivityType.streaming,
@@ -474,7 +513,12 @@ async def set_status_command(interaction: discord.Interaction, status_type: app_
     }
     activity = discord.Activity(type=status_map[status_type.value], name=status_text)
     await bot.change_presence(status=discord.Status.online, activity=activity)
-    await interaction.response.send_message(f"status changed to: {status_type.name} {status_text}")
+    
+    # Update stored activity for owner sync
+    bot_original_activity = activity
+    bot_was_manually_set_offline = False
+    
+    await interaction.response.send_message(f"anything for you 😘😘: {status_type.name} {status_text}")
 
 @tree.command(name='setonline', description='change the bot\'s online status', guild=CONTROL_GUILD)
 @app_commands.choices(online_status=[
@@ -483,19 +527,68 @@ async def set_status_command(interaction: discord.Interaction, status_type: app_
 ])
 @is_owner_and_in_control_channel()
 async def set_online_status(interaction: discord.Interaction, online_status: app_commands.Choice[str]):
+    global bot_was_manually_set_offline
+    
     status_map = {
         'online': discord.Status.online, 'idle': discord.Status.idle,
         'dnd': discord.Status.dnd, 'invisible': discord.Status.invisible,
     }
     current_activity = interaction.guild.me.activity
     await bot.change_presence(status=status_map[online_status.value], activity=current_activity)
+    
+    # Track if manually set to invisible
+    if online_status.value == 'invisible':
+        bot_was_manually_set_offline = True
+    else:
+        bot_was_manually_set_offline = False
+    
     await interaction.response.send_message(f"status changed to: {online_status.name}")
 
 @tree.command(name='clearstatus', description='clear the bot\'s activity status', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()
 async def clear_status_command(interaction: discord.Interaction):
+    global bot_original_activity, bot_was_manually_set_offline
+    
     await bot.change_presence(status=discord.Status.online, activity=None)
+    bot_original_activity = None
+    bot_was_manually_set_offline = False
+    
     await interaction.response.send_message("status cleared")
+
+# --- New Owner Status Sync Commands ---
+@tree.command(name='syncme', description='pilot syncs online activity with me', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def enable_owner_sync(interaction: discord.Interaction):
+    global owner_status_sync_enabled
+    
+    owner_status_sync_enabled = True
+    await interaction.response.send_message("hi ofc ill sync with you!! 😍😍😍😍😍😘😘😘😘")
+
+@tree.command(name='nosync', description='disables syncing', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def disable_owner_sync(interaction: discord.Interaction):
+    global owner_status_sync_enabled
+    
+    owner_status_sync_enabled = False
+    await interaction.response.send_message("okay ill stay online")
+
+@tree.command(name='syncstatus', description='check if owner sync is enabled', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def sync_settings(interaction: discord.Interaction):
+    global owner_status_sync_enabled, bot_original_activity
+    
+    sync_status = "enabled" if owner_status_sync_enabled else "disabled"
+    activity_text = "none" if not bot_original_activity else f"{bot_original_activity.type.name.lower()}: {bot_original_activity.name}"
+    
+    # Check owner's current status
+    guild = bot.get_guild(CONTROL_SERVER_ID)
+    owner_status = "unknown"
+    if guild:
+        owner = guild.get_member(bot.owner_id)
+        if owner:
+            owner_status = owner.status.name.lower()
+    
+    await interaction.response.send_message(f"sync: {sync_status}\nstored activity: {activity_text}\nyour status: {owner_status}")
 
 # --- New Tracking Commands ---
 @tree.command(name='settrackuser', description='set the user ID to track (will be referred to as Lillian)', guild=CONTROL_GUILD)
@@ -604,13 +697,13 @@ async def clear_tracking(interaction: discord.Interaction):
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, NotOwnerError):
         # Custom message for non-owners
-        await interaction.response.send_message('ew who are you', ephemeral=True)
+        await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=True)
     elif isinstance(error, WrongChannelError):
         # Custom message for using the command in the wrong channel
         await interaction.response.send_message('this command cant be used here', ephemeral=True)
     elif isinstance(error, app_commands.CheckFailure):
         # Fallback for any other permission-related errors
-        await interaction.response.send_message('you do not have permission to use this command', ephemeral=True)
+        await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=True)
     else:
         # Generic error for other issues
         await interaction.response.send_message('an error occurred', ephemeral=True)
