@@ -174,6 +174,7 @@ def load_settings() -> dict:
         'control_server_id': _parse_int(os.getenv('CONTROL_SERVER_ID')),
         'control_channel_id': _parse_int(os.getenv('CONTROL_CHANNEL_ID')),
         'monitoring_channel_id': _parse_int(os.getenv('MONITORING_CHANNEL_ID')),
+        'web_activity_channel_id': _parse_int(os.getenv('WEB_ACTIVITY_CHANNEL_ID')),
         'tracking_data_path': _clean_env(os.getenv('TRACKING_DATA_PATH')),
     }
 
@@ -205,7 +206,7 @@ def load_settings() -> dict:
         parsed = _parse_int(config['web_port'])
         if parsed is not None:
             config['web_port'] = parsed
-    for key in ('control_server_id', 'control_channel_id', 'monitoring_channel_id'):
+    for key in ('control_server_id', 'control_channel_id', 'monitoring_channel_id', 'web_activity_channel_id'):
         if key in config:
             parsed = _parse_int(config[key])
             if parsed is not None:
@@ -250,6 +251,8 @@ def _int_with_default(key: str, default: int) -> int:
 CONTROL_SERVER_ID = _int_with_default('control_server_id', 1258526802599481375)
 CONTROL_CHANNEL_ID = _int_with_default('control_channel_id', 1311918837528002600)
 MONITORING_CHANNEL_ID = _int_with_default('monitoring_channel_id', 1399788089307566111)
+# Optional channel for website activity logs (no fallback to monitoring)
+WEB_ACTIVITY_CHANNEL_ID = _parse_int(OPTIONS.get('web_activity_channel_id'))
 CONTROL_GUILD = discord.Object(id=CONTROL_SERVER_ID)
 # ------------------------------------
 
@@ -525,6 +528,27 @@ async def send_monitoring_message(message=None, embed=None):
             logger.warning("Monitoring channel %s not found", MONITORING_CHANNEL_ID)
     except Exception as e:
         logger.error("Error sending monitoring message: %s", e)
+
+async def send_web_activity_message(message=None, embed=None):
+    """Send a message to the dedicated web activity channel.
+
+    If WEB_ACTIVITY_CHANNEL_ID is not configured, this becomes a no-op.
+    It intentionally does NOT fall back to the monitoring channel.
+    """
+    if not WEB_ACTIVITY_CHANNEL_ID:
+        # Silently skip if not configured to avoid polluting monitoring
+        return
+    try:
+        channel = bot.get_channel(WEB_ACTIVITY_CHANNEL_ID)
+        if channel:
+            if embed:
+                await channel.send(embed=embed)
+            elif message:
+                await channel.send(message)
+        else:
+            logger.warning("Web activity channel %s not found", WEB_ACTIVITY_CHANNEL_ID)
+    except Exception as e:
+        logger.error("Error sending web activity message: %s", e)
 
 # --- Owner Presence Tracking ---
 @bot.event

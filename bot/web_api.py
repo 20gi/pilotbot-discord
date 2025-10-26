@@ -156,17 +156,17 @@ class WebAPIServer:
         self._refresh_allowed_users()
 
     async def _log_to_discord(self, message: str) -> None:
-        """Send a simple monitoring message to the bot's monitoring channel.
+        """Send a simple activity message to the web activity channel.
 
-        Uses bot.main.send_monitoring_message if available. Best-effort only.
+        Uses bot.main.send_web_activity_message if available. Best-effort only.
         """
         try:
             main_module = self._main()
-            send_fn = getattr(main_module, "send_monitoring_message", None)
+            send_fn = getattr(main_module, "send_web_activity_message", None)
             if send_fn and callable(send_fn):
                 await send_fn(message=message)
         except Exception as e:
-            logger.debug("Failed to send monitoring message: %s", e)
+            logger.debug("Failed to send web activity message: %s", e)
 
     # ------------------ Session & Auth helpers ------------------
     def _sign(self, payload: Dict) -> str:
