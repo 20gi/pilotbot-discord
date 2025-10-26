@@ -648,7 +648,7 @@
             Pilot's Cockpit
           </h1>
           <p class="text-sm md:text-base text-white/60 max-w-2xl mt-2">
-            pilot &gt; dusekkar
+            pilot bot configuragtion
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-3">
