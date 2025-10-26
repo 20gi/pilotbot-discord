@@ -72,6 +72,76 @@ def _read_secret_file(path: str | None) -> str | None:
         return None
 
 
+def _normalize_path_input(value) -> str | None:
+    """Normalize a potential path input into a stripped string or None."""
+    if value is None:
+        return None
+    if isinstance(value, Path):
+        text = str(value)
+    else:
+        text = str(value)
+    text = text.strip()
+    return text or None
+
+
+def _resolve_tracking_data_path(option_value, env_value, data_dir: Path):
+    """Resolve the tracking data path and return (path, details, log_messages)."""
+    logs: List[tuple[int, str]] = []
+
+    option_text = _normalize_path_input(option_value)
+    env_text = _normalize_path_input(env_value)
+    logs.append((logging.INFO, f"TRACKING_DATA_PATH inputs -> option={option_text!r}, env={env_text!r}"))
+
+    chosen_text = option_text or env_text
+    source = 'default'
+
+    if chosen_text is None:
+        path = data_dir / 'lillian_tracking.json'
+        logs.append((logging.INFO, f"No tracking data path configured; using default file {path}"))
+    else:
+        candidate = Path(chosen_text).expanduser()
+        source = 'options' if option_text else 'env'
+        treat_as_directory = False
+        directory_base = candidate
+
+        if chosen_text in {'.', os.curdir}:
+            treat_as_directory = True
+            logs.append(
+                (logging.WARNING,
+                 f"TRACKING_DATA_PATH '{chosen_text}' refers to the current directory; writing to "
+                 f"{(directory_base / 'lillian_tracking.json')}")
+            )
+        elif chosen_text.endswith(('/', '\\')):
+            treat_as_directory = True
+            logs.append(
+                (logging.WARNING,
+                 f"TRACKING_DATA_PATH '{chosen_text}' ends with a path separator; treating it as directory "
+                 f"{directory_base}")
+            )
+        elif candidate.exists() and candidate.is_dir():
+            treat_as_directory = True
+            logs.append(
+                (logging.WARNING,
+                 f"TRACKING_DATA_PATH '{candidate}' is a directory; defaulting to a file within it")
+            )
+
+        if treat_as_directory:
+            path = directory_base / 'lillian_tracking.json'
+        else:
+            path = candidate
+
+    path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logs.append((logging.INFO, f"TRACKING_DATA_PATH resolved (source={source}) -> {path.resolve()}"))
+
+    details = {
+        'option': option_text,
+        'env': env_text,
+        'source': source,
+    }
+    return path, details, logs
+
+
 def load_settings() -> dict:
     config: dict = {}
 
@@ -152,19 +222,11 @@ OPTIONS.setdefault('chutes_model', 'deepseek-ai/DeepSeek-V3-0324')
 DATA_DIR = DEFAULT_DATA_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-raw_tracking_path = OPTIONS.get('tracking_data_path') or os.getenv('TRACKING_DATA_PATH')
-if raw_tracking_path:
-    TRACKING_DATA_PATH = Path(raw_tracking_path)
-else:
-    TRACKING_DATA_PATH = DATA_DIR / 'lillian_tracking.json'
-
-if TRACKING_DATA_PATH.is_dir():
-    logger.warning(
-        "TRACKING_DATA_PATH points to a directory (%s); defaulting to file within that directory",
-        TRACKING_DATA_PATH,
-    )
-    TRACKING_DATA_PATH = (TRACKING_DATA_PATH / 'lillian_tracking.json')
-TRACKING_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+TRACKING_DATA_PATH, TRACKING_DATA_PATH_DETAILS, TRACKING_PATH_LOGS = _resolve_tracking_data_path(
+    OPTIONS.get('tracking_data_path'),
+    os.getenv('TRACKING_DATA_PATH'),
+    DATA_DIR,
+)
 
 # --- Discord bot setup -----------------------------------------------------
 intents = discord.Intents.default()
@@ -201,6 +263,17 @@ if not logging.getLogger().hasHandlers():
 else:
     logging.getLogger().setLevel(log_level)
 
+logger.info("DATA_DIR resolved to %s", DATA_DIR.resolve())
+for level, message in TRACKING_PATH_LOGS:
+    logger.log(level, message)
+logger.info(
+    "TRACKING_DATA_PATH summary -> path=%s source=%s option=%r env=%r",
+    TRACKING_DATA_PATH,
+    TRACKING_DATA_PATH_DETAILS.get('source'),
+    TRACKING_DATA_PATH_DETAILS.get('option'),
+    TRACKING_DATA_PATH_DETAILS.get('env'),
+)
+
 # --- Owner Status Tracking Variables ---
 owner_status_sync_enabled = False
 bot_original_activity = None
@@ -229,6 +302,24 @@ def load_tracking_data():
             "current_session": None,
             "leaderboard": []
         }
+        save_tracking_data(default_data)
+        return default_data
+    except IsADirectoryError:
+        logger.error("TRACKING_DATA_PATH %s is a directory; resetting to a file path", TRACKING_DATA_PATH)
+        default_data = {
+            "tracked_user_id": None,
+            "current_session": None,
+            "leaderboard": []
+        }
+        directory_path = TRACKING_DATA_PATH
+        new_path = directory_path / 'lillian_tracking.json'
+        if new_path == directory_path:
+            new_path = DATA_DIR / 'lillian_tracking.json'
+        # Update the global path so subsequent calls use the file
+        global TRACKING_DATA_PATH
+        TRACKING_DATA_PATH = new_path
+        TRACKING_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Updated TRACKING_DATA_PATH to %s after directory fallback", TRACKING_DATA_PATH.resolve())
         save_tracking_data(default_data)
         return default_data
     except json.JSONDecodeError:
@@ -906,7 +997,7 @@ async def import_lillian(interaction: discord.Interaction, user_id: str, data_fi
         f"imported {len(leaderboard)} sessions for lillian w/ user id {user_id_int}" + (
             " (current session active)" if current_session else ""
         ),
-        ephemeral=True,
+        ephemeral=False,
     )
 
 # --- Updated Error Handler ---

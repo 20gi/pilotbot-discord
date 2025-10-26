@@ -1,0 +1,49 @@
+        await interaction.followup.send("could not read uploaded file", ephemeral=True)
+        return
+
+    try:
+        text = raw_bytes.decode('utf-8')
+    except UnicodeDecodeError:
+        text = raw_bytes.decode('latin-1')
+
+    try:
+        leaderboard, current_session = parse_lillian_migration(text, user_id_int)
+    except Exception as exc:
+        logger.exception("Failed to parse migration data")
+        await interaction.followup.send(f"failed to parse migration data: {exc}", ephemeral=False)
+        return
+
+    tracking_data = {
+        "tracked_user_id": user_id_int,
+        "current_session": current_session,
+        "leaderboard": leaderboard,
+    }
+    save_tracking_data(tracking_data)
+    logger.info("Imported %d leaderboard entries for user %s", len(leaderboard), user_id_int)
+    await interaction.followup.send(
+        f"imported {len(leaderboard)} sessions for lillian w/ user id {user_id_int}" + (
+            " (current session active)" if current_session else ""
+        ),
+        ephemeral=True,
+    )
+
+# --- Updated Error Handler ---
+@tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, NotOwnerError):
+        # Custom message for non-owners
+        try:
+            await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=False)
+        except discord.InteractionResponded:
+            await interaction.followup.send('ew who are you you cant tell me what to do', ephemeral=False)
+        return
+    elif isinstance(error, WrongChannelError):
+        # Custom message for using the command in the wrong channel
+        try:
+            await interaction.response.send_message('this command cant be used here', ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send('this command cant be used here', ephemeral=True)
+        return
+    elif isinstance(error, app_commands.CheckFailure):
+        # Fallback for any other permission-related errors
+        try:
