@@ -8,7 +8,7 @@
   --app-background-color: #05070f;
   --app-background-image: none;
   --app-background-blur: 18px;
-  --app-panel-blur: 8px;
+  --app-panel-blur: 11px;
   --app-text-color-rgb: 241 245 249;
   --app-text-color: rgb(241 245 249);
   --app-accent-color-rgb: 96 165 250;
@@ -19,6 +19,12 @@
   --app-accent-warning-color: rgb(249 115 22);
   --app-accent-danger-color-rgb: 248 113 113;
   --app-accent-danger-color: rgb(248 113 113);
+  --app-panel-surface-color: rgba(11, 15, 26, 0.78);
+  --app-panel-surface-border-color: rgba(15, 22, 35, 0.9);
+  --app-panel-card-color: rgba(14, 22, 36, 0.6);
+  --app-panel-card-border-color: rgba(28, 39, 56, 0.68);
+  --app-chip-background-color: rgba(28, 39, 56, 0.55);
+  --app-chip-border-color: rgba(28, 39, 56, 0.75);
 }
 
 body {
@@ -31,6 +37,7 @@ body {
     var(--app-background-image, none);
   background-size: cover, cover, cover;
   background-repeat: no-repeat, no-repeat, no-repeat;
+  background-position: center center;
   background-attachment: fixed;
 }
 
@@ -39,11 +46,24 @@ body {
 }
 
 .panel-surface {
-  --tw-backdrop-blur: blur(var(--app-background-blur, 18px));
+  background-color: var(--app-panel-surface-color, rgba(11, 15, 26, 0.78));
+  backdrop-filter: blur(var(--app-background-blur, 18px));
+  -webkit-backdrop-filter: blur(var(--app-background-blur, 18px));
+  border-color: var(--app-panel-surface-border-color, rgba(15, 22, 35, 0.9));
 }
 
 .panel-card {
-  --tw-backdrop-blur: blur(var(--app-panel-blur, 8px));
+  background-color: var(--app-panel-card-color, rgba(14, 22, 36, 0.6));
+  backdrop-filter: blur(var(--app-panel-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--app-panel-blur, 8px));
+  border-color: var(--app-panel-card-border-color, rgba(28, 39, 56, 0.68));
+}
+
+.glass-chip {
+  background-color: var(--app-chip-background-color, rgba(28, 39, 56, 0.55));
+  border-color: var(--app-chip-border-color, rgba(28, 39, 56, 0.75));
+  backdrop-filter: blur(var(--app-panel-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--app-panel-blur, 8px));
 }
 
 .text-white {
@@ -78,32 +98,42 @@ body {
   color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 30%, transparent) !important;
 }
 
+.bg-surface-glass\/80 {
+  background-color: var(--app-panel-surface-color, rgba(11, 15, 26, 0.78)) !important;
+  backdrop-filter: blur(var(--app-background-blur, 18px));
+  -webkit-backdrop-filter: blur(var(--app-background-blur, 18px));
+}
+
 .bg-white\/5 {
-  background-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 5%, transparent) !important;
+  background-color: var(--app-panel-card-color, rgba(14, 22, 36, 0.6)) !important;
+  backdrop-filter: blur(var(--app-panel-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--app-panel-blur, 8px));
 }
 
 .bg-white\/10 {
-  background-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 10%, transparent) !important;
+  background-color: color-mix(in srgb, var(--app-panel-card-color, rgba(14, 22, 36, 0.6)) 85%, transparent) !important;
+  backdrop-filter: blur(var(--app-panel-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--app-panel-blur, 8px));
 }
 
 .border-white\/5 {
-  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 5%, transparent) !important;
+  border-color: color-mix(in srgb, var(--app-panel-card-border-color, rgba(28, 39, 56, 0.68)) 55%, transparent) !important;
 }
 
 .border-white\/10 {
-  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 10%, transparent) !important;
+  border-color: var(--app-panel-card-border-color, rgba(28, 39, 56, 0.68)) !important;
 }
 
 .border-white\/15 {
-  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--app-panel-card-border-color, rgba(28, 39, 56, 0.68)) 90%, transparent) !important;
 }
 
 .border-white\/20 {
-  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 20%, transparent) !important;
+  border-color: color-mix(in srgb, var(--app-panel-card-border-color, rgba(28, 39, 56, 0.68)) 70%, transparent) !important;
 }
 
 .border-white\/30 {
-  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 30%, transparent) !important;
+  border-color: color-mix(in srgb, var(--app-panel-card-border-color, rgba(28, 39, 56, 0.68)) 45%, transparent) !important;
 }
 
 .text-accent {
@@ -184,4 +214,11 @@ body {
 
 .bg-accentDanger\/30 {
   background-color: color-mix(in srgb, var(--app-accent-danger-color, rgb(248 113 113)) 30%, transparent) !important;
+}
+
+@media (max-width: 768px) {
+  body {
+    background-attachment: scroll;
+    background-position: center top;
+  }
 }

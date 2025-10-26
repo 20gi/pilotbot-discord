@@ -351,8 +351,12 @@ DEFAULT_THEME_SETTINGS = {
     "accent_warning_color": "#f97316",
     "accent_danger_color": "#f87171",
     "text_color": "#f1f5f9",
+    "panel_surface_color": "#0b0f1a",
+    "panel_surface_opacity": 0.78,
+    "panel_card_color": "#0e1624",
+    "panel_card_opacity": 0.6,
     "background_blur": 18,
-    "panel_blur": 8,
+    "panel_blur": 11,
 }
 WEB_THEME_SETTINGS: Dict[str, object] = dict(DEFAULT_THEME_SETTINGS)
 
@@ -484,6 +488,20 @@ def _coerce_blur_value(value, fallback: int, field: str) -> int:
     return int(round(num))
 
 
+def _coerce_opacity_value(value, fallback: float, field: str) -> float:
+    if value is None:
+        return fallback
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid_{field}")
+    if num < 0:
+        num = 0.0
+    if num > 1:
+        num = 1.0
+    return float(num)
+
+
 def _merge_theme_settings(base: Mapping[str, object], update: Mapping[str, object] | None) -> Dict[str, object]:
     result: Dict[str, object] = dict(base)
     if not update:
@@ -519,6 +537,14 @@ def _merge_theme_settings(base: Mapping[str, object], update: Mapping[str, objec
         current['accent_danger_color'] = _validate_hex_color(update.get('accent_danger_color'), str(result['accent_danger_color']), 'accent_danger_color')
     if 'text_color' in update:
         current['text_color'] = _validate_hex_color(update.get('text_color'), str(result['text_color']), 'text_color')
+    if 'panel_surface_color' in update:
+        current['panel_surface_color'] = _validate_hex_color(update.get('panel_surface_color'), str(result['panel_surface_color']), 'panel_surface_color')
+    if 'panel_surface_opacity' in update:
+        current['panel_surface_opacity'] = _coerce_opacity_value(update.get('panel_surface_opacity'), float(result['panel_surface_opacity']), 'panel_surface_opacity')
+    if 'panel_card_color' in update:
+        current['panel_card_color'] = _validate_hex_color(update.get('panel_card_color'), str(result['panel_card_color']), 'panel_card_color')
+    if 'panel_card_opacity' in update:
+        current['panel_card_opacity'] = _coerce_opacity_value(update.get('panel_card_opacity'), float(result['panel_card_opacity']), 'panel_card_opacity')
     if 'background_blur' in update:
         current['background_blur'] = _coerce_blur_value(update.get('background_blur'), int(result['background_blur']), 'background_blur')
     if 'panel_blur' in update:

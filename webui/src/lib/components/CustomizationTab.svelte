@@ -10,14 +10,28 @@
   let dirty = false
   let saving = false
   let useImage = Boolean(draft.background_image)
+  let panelBlurRatio = computePanelBlurRatio(draft)
 
   $: if (!dirty) {
     draft = { ...currentTheme }
     useImage = Boolean(draft.background_image)
+    panelBlurRatio = computePanelBlurRatio(draft)
   }
 
   function markDirty() {
     dirty = true
+  }
+
+  function clamp(value: number, min: number, max: number): number {
+    if (Number.isNaN(value)) return min
+    return Math.min(Math.max(value, min), max)
+  }
+
+  function computePanelBlurRatio(theme: ThemeSettings): number {
+    const bg = Number(theme.background_blur) || 0
+    const panel = Number(theme.panel_blur) || 0
+    if (bg <= 0) return 0.6
+    return clamp(panel / bg, 0, 1)
   }
 
   function updateColor(key: keyof ThemeSettings, value: string) {
@@ -27,7 +41,17 @@
 
   function updateBlur(key: 'background_blur' | 'panel_blur', value: string) {
     const numeric = Number(value)
-    draft = { ...draft, [key]: Number.isFinite(numeric) ? Math.max(0, Math.min(64, Math.round(numeric))) : 0 }
+    const coerced = Number.isFinite(numeric) ? clamp(Math.round(numeric), 0, 64) : 0
+    if (key === 'background_blur') {
+      draft = {
+        ...draft,
+        background_blur: coerced,
+        panel_blur: Math.round(coerced * panelBlurRatio),
+      }
+    } else {
+      draft = { ...draft, panel_blur: coerced }
+      panelBlurRatio = computePanelBlurRatio(draft)
+    }
     markDirty()
   }
 
@@ -44,26 +68,52 @@
     markDirty()
   }
 
+  function updateOpacity(key: 'panel_surface_opacity' | 'panel_card_opacity', value: string) {
+    const numeric = Number(value)
+    const coerced = Number.isFinite(numeric) ? clamp(numeric / 100, 0, 1) : 0
+    draft = { ...draft, [key]: coerced }
+    markDirty()
+  }
+
+  function updatePanelColor(key: 'panel_surface_color' | 'panel_card_color', value: string) {
+    draft = { ...draft, [key]: value }
+    markDirty()
+  }
+
+  function updatePanelBlurRatio(value: string) {
+    const numeric = Number(value)
+    panelBlurRatio = clamp(Number.isFinite(numeric) ? numeric / 100 : 0.6, 0, 1)
+    draft = {
+      ...draft,
+      panel_blur: Math.round((Number(draft.background_blur) || 0) * panelBlurRatio),
+    }
+    markDirty()
+  }
+
   function applyDefaults() {
     draft = { ...defaultTheme }
     useImage = Boolean(draft.background_image)
+    panelBlurRatio = computePanelBlurRatio(draft)
     dirty = true
   }
 
   function resetChanges() {
     draft = { ...currentTheme }
     useImage = Boolean(draft.background_image)
+    panelBlurRatio = computePanelBlurRatio(draft)
     dirty = false
   }
 
   async function handleSubmit() {
     if (saving || !dirty) return
     saving = true
+    const backgroundBlur = Number(draft.background_blur) || 0
+    const ratio = clamp(panelBlurRatio, 0, 1)
     const payload: ThemeSettings = {
       ...draft,
       background_image: useImage ? (draft.background_image || '').trim() : '',
-      background_blur: Number(draft.background_blur) || 0,
-      panel_blur: Number(draft.panel_blur) || 0,
+      background_blur: backgroundBlur,
+      panel_blur: Math.round(backgroundBlur * ratio),
     }
     const ok = await saveTheme(payload)
     saving = false
@@ -163,6 +213,55 @@
       </label>
     </div>
 
+    <div class="grid gap-4 md:grid-cols-2">
+      <label class="flex flex-col gap-3">
+        <div class="flex items-center justify-between text-sm text-white/70">
+          <span>Panel surface</span>
+          <span class="text-white/50">{Math.round(draft.panel_surface_opacity * 100)}% opacity</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <input
+            class="h-12 w-20 rounded-xl border border-white/10 bg-white/5"
+            type="color"
+            value={draft.panel_surface_color}
+            on:input={(event) => updatePanelColor('panel_surface_color', (event.currentTarget as HTMLInputElement).value)}
+          />
+          <input
+            class="flex-1"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={Math.round(draft.panel_surface_opacity * 100)}
+            on:input={(event) => updateOpacity('panel_surface_opacity', (event.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
+      </label>
+      <label class="flex flex-col gap-3">
+        <div class="flex items-center justify-between text-sm text-white/70">
+          <span>Panel cards</span>
+          <span class="text-white/50">{Math.round(draft.panel_card_opacity * 100)}% opacity</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <input
+            class="h-12 w-20 rounded-xl border border-white/10 bg-white/5"
+            type="color"
+            value={draft.panel_card_color}
+            on:input={(event) => updatePanelColor('panel_card_color', (event.currentTarget as HTMLInputElement).value)}
+          />
+          <input
+            class="flex-1"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={Math.round(draft.panel_card_opacity * 100)}
+            on:input={(event) => updateOpacity('panel_card_opacity', (event.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
+      </label>
+    </div>
+
     <div class="grid gap-6 md:grid-cols-2">
       <label class="flex flex-col gap-3">
         <div class="flex items-center justify-between text-sm text-white/70">
@@ -180,16 +279,16 @@
       </label>
       <label class="flex flex-col gap-3">
         <div class="flex items-center justify-between text-sm text-white/70">
-          <span>Panel blur</span>
-          <span class="text-white/50">{draft.panel_blur}px</span>
+          <span>Panel blur ratio</span>
+          <span class="text-white/50">{Math.round(panelBlurRatio * 100)}%</span>
         </div>
         <input
           type="range"
           min="0"
-          max="64"
-          step="1"
-          value={draft.panel_blur}
-          on:input={(event) => updateBlur('panel_blur', (event.currentTarget as HTMLInputElement).value)}
+          max="100"
+          step="5"
+          value={Math.round(panelBlurRatio * 100)}
+          on:input={(event) => updatePanelBlurRatio((event.currentTarget as HTMLInputElement).value)}
         />
       </label>
     </div>

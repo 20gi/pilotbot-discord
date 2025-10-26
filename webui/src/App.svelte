@@ -60,10 +60,8 @@
     { value: 'secretmode', label: 'Secret Mode' },
   ]
 
-  const panelClass =
-    'panel-surface bg-surface-glass/80 border border-white/10 backdrop-blur-md shadow-glass rounded-3xl p-6 md:p-8'
-  const cardClass =
-    'panel-card bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-sm shadow-glass'
+  const panelClass = 'panel-surface border shadow-glass rounded-3xl p-6 md:p-8'
+  const cardClass = 'panel-card border rounded-2xl p-5 shadow-glass'
   const navActiveClass =
     'px-4 py-2 rounded-2xl border-accent bg-accent/20 text-white shadow-glass transition text-sm font-medium'
   const navInactiveClass =
@@ -293,6 +291,8 @@
   }
 
   async function saveThemeSettings(themeInput: ThemeSettings): Promise<boolean> {
+    const surfaceOpacity = Number(themeInput.panel_surface_opacity)
+    const cardOpacity = Number(themeInput.panel_card_opacity)
     const payload: ThemeSettings = {
       ...themeInput,
       background_image: (themeInput.background_image ?? '').trim(),
@@ -302,6 +302,10 @@
       accent_warning_color: themeInput.accent_warning_color,
       accent_danger_color: themeInput.accent_danger_color,
       text_color: themeInput.text_color,
+      panel_surface_color: themeInput.panel_surface_color,
+      panel_surface_opacity: Number.isFinite(surfaceOpacity) ? Math.min(1, Math.max(0, surfaceOpacity)) : 0,
+      panel_card_color: themeInput.panel_card_color,
+      panel_card_opacity: Number.isFinite(cardOpacity) ? Math.min(1, Math.max(0, cardOpacity)) : 0,
       background_blur: Math.round(Math.max(0, Math.min(64, Number(themeInput.background_blur) || 0))),
       panel_blur: Math.round(Math.max(0, Math.min(64, Number(themeInput.panel_blur) || 0))),
     }
@@ -638,7 +642,7 @@
       <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
         <div>
           <h1 class="text-3xl md:text-4xl font-semibold text-white/90 flex items-center gap-3">
-            <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 border border-white/10 shadow-lg">
+            <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl glass-chip border shadow-lg">
               👨‍✈️
             </span>
             Pilot's Cockpit
@@ -649,7 +653,7 @@
         </div>
         <div class="flex flex-wrap items-center gap-3">
           {#if session.authenticated}
-            <div class="px-4 py-2 rounded-2xl border border-white/10 bg-white/5 backdrop-blur">
+            <div class="glass-chip px-4 py-2 rounded-2xl border">
               <p class="text-xs uppercase tracking-wide text-white/50">Logged in</p>
               <p class="text-white/80 font-medium">{session.user?.name ?? 'Unknown User'}</p>
             </div>
@@ -677,16 +681,16 @@
       </div>
 
       <div class="flex flex-wrap gap-3 text-xs text-white/50">
-        <span class="px-3 py-1 rounded-full border border-white/10 bg-white/5 backdrop-blur-sm">
+        <span class="glass-chip px-3 py-1 rounded-full border">
           Permissions: {session.permissions?.length ? session.permissions.join(', ') : 'none'}
         </span>
         {#if statusData?.presence?.status}
-          <span class="px-3 py-1 rounded-full border border-white/10 bg-white/5 backdrop-blur-sm">
+          <span class="glass-chip px-3 py-1 rounded-full border">
             Current Presence: {statusData.presence.status}
           </span>
         {/if}
         {#if statusData?.presence?.activity?.name}
-          <span class="px-3 py-1 rounded-full border border-white/10 bg-white/5 backdrop-blur-sm">
+          <span class="glass-chip px-3 py-1 rounded-full border">
             Activity: {statusData.presence.activity.type ?? 'custom'} • {statusData.presence.activity.name}
           </span>
         {/if}
@@ -696,9 +700,7 @@
     {#if alerts.length}
       <div class="space-y-2">
         {#each alerts as alert (alert.id)}
-          <div
-            class={'flex items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-sm backdrop-blur-sm ' + alertClass(alert.type)}
-          >
+          <div class={'flex items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-sm ' + alertClass(alert.type)}>
             <span>{alert.message}</span>
           </div>
         {/each}
