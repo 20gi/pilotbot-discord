@@ -24,9 +24,9 @@
     },
     { id: 'sync', label: 'Owner Sync', required: ['sync_view', 'sync_manage'] },
     { id: 'tracking', label: 'Tracking', required: ['tracking_view', 'tracking_manage'] },
-    { id: 'access', label: 'Access Control', required: ['admin'] },
     { id: 'pilot', label: 'Pilot Config', required: ['pilot_view', 'pilot_manage'] },
     { id: 'pilot-chat', label: 'Pilot Chat', required: ['pilot_chat'] },
+    { id: 'access', label: 'Access Control', required: ['admin'] },
   ] as const
 
   const statusTypes = [
@@ -57,6 +57,8 @@
     'px-4 py-2 rounded-2xl border-accent bg-accent/20 text-white shadow-glass transition text-sm font-medium'
   const navInactiveClass =
     'px-4 py-2 rounded-2xl border-white/10 bg-white/5 text-white/60 hover:text-white/90 hover:border-white/30 transition text-sm font-medium'
+  const navDisabledClass =
+    'px-4 py-2 rounded-2xl border-white/5 bg-white/5 text-white/30 opacity-40 cursor-not-allowed transition text-sm font-medium'
 
   const loginUrl = '/login'
   const logoutUrl = '/logout'
@@ -617,13 +619,20 @@
     {:else}
       <div class={panelClass + ' space-y-6'}>
         <nav class="flex flex-wrap gap-2">
-          {#each availableTabs() as tab}
-            <button
-              class={activeTab === tab.id ? navActiveClass : navInactiveClass}
-              on:click={() => (activeTab = tab.id)}
-            >
-              {tab.label}
-            </button>
+          {#each TAB_DEFS as tab (tab.id)}
+            {#if hasAny(tab.required)}
+              <button
+                type="button"
+                class={activeTab === tab.id ? navActiveClass : navInactiveClass}
+                on:click={() => (activeTab = tab.id)}
+              >
+                {tab.label}
+              </button>
+            {:else}
+              <button type="button" class={navDisabledClass} disabled>
+                {tab.label}
+              </button>
+            {/if}
           {/each}
         </nav>
 
