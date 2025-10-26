@@ -66,8 +66,6 @@
     'px-4 py-2 rounded-2xl border-accent bg-accent/20 text-white shadow-glass transition text-sm font-medium'
   const navInactiveClass =
     'px-4 py-2 rounded-2xl border-white/10 bg-white/5 text-white/60 hover:text-white/90 hover:border-white/30 transition text-sm font-medium'
-  const navDisabledClass =
-    'px-4 py-2 rounded-2xl border-white/5 bg-white/5 text-white/30 opacity-40 cursor-not-allowed transition text-sm font-medium'
 
   const loginUrl = '/login'
   const logoutUrl = '/logout'
@@ -88,9 +86,12 @@
   let permissionsDraft: Record<string, string[]> = {}
   let availablePermissions: string[] = []
   let themeSettings: ThemeSettings = { ...defaultTheme }
+  type TabDef = (typeof TAB_DEFS)[number]
+  let allowedTabs: TabDef[] = []
   const unsubscribeTheme = theme.subscribe((value) => {
     themeSettings = value
   })
+  $: allowedTabs = session.authenticated ? TAB_DEFS.filter((tab) => hasAny(tab.required)) : []
   function hasPerm(perm: string): boolean {
     const perms = session.permissions ?? []
     return perms.includes('admin') || perms.includes(perm)
@@ -710,33 +711,41 @@
     {#if loadingSession}
       <div class={panelClass + ' flex items-center justify-center text-white/60'}>Loading session…</div>
     {:else if !session.authenticated}
-      <div class={panelClass + ' text-center space-y-4 text-white/70'}>
-        <h2 class="text-2xl font-semibold text-white/90">Authentication required</h2>
-        <p>Sign in with Discord to access the cockpit.</p>
-        <a
-          class="inline-flex items-center justify-center px-5 py-3 rounded-2xl border border-accent/40 bg-accent/20 text-accent hover:bg-accent/30 transition"
-          href={loginUrl}
-        >
-          Login with Discord
-        </a>
-      </div>
+      <section class="landing-panel">
+        <div class="landing-decoration"></div>
+        <div class="landing-content">
+          <span class="landing-chip">Pilot Control Deck</span>
+          <h2 class="text-3xl md:text-4xl font-semibold text-white/90">Welcome aboard</h2>
+          <p class="text-white/70 max-w-xl">
+            Sign in with Discord to manage the bot, adjust presence, and keep the cockpit running smoothly.
+          </p>
+          <div class="landing-actions">
+            <a class="glass-action" href={loginUrl}>Login with Discord</a>
+          </div>
+        </div>
+      </section>
+    {:else if allowedTabs.length === 0}
+      <section class="denied-panel">
+        <div class="denied-content">
+          <span class="denied-icon">🔒</span>
+          <h2 class="text-2xl font-semibold text-white/90">Access denied</h2>
+          <p class="text-white/60 max-w-md">
+            You signed in successfully, but your account doesn’t have permission to use the control deck yet. Reach out to an admin if you need access.
+          </p>
+          <a class="glass-action" href={logoutUrl}>Log out</a>
+        </div>
+      </section>
     {:else}
       <div class={panelClass + ' space-y-6'}>
         <nav class="flex flex-wrap gap-2">
-          {#each TAB_DEFS as tab (tab.id)}
-            {#if hasAny(tab.required)}
-              <button
-                type="button"
-                class={activeTab === tab.id ? navActiveClass : navInactiveClass}
-                on:click={() => (activeTab = tab.id)}
-              >
-                {tab.label}
-              </button>
-            {:else}
-              <button type="button" class={navDisabledClass} disabled>
-                {tab.label}
-              </button>
-            {/if}
+          {#each allowedTabs as tab (tab.id)}
+            <button
+              type="button"
+              class={activeTab === tab.id ? navActiveClass : navInactiveClass}
+              on:click={() => (activeTab = tab.id)}
+            >
+              {tab.label}
+            </button>
           {/each}
         </nav>
 
