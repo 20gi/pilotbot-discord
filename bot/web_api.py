@@ -155,6 +155,19 @@ class WebAPIServer:
         self._setup_routes()
         self._refresh_allowed_users()
 
+    async def _log_to_discord(self, message: str) -> None:
+        """Send a simple monitoring message to the bot's monitoring channel.
+
+        Uses bot.main.send_monitoring_message if available. Best-effort only.
+        """
+        try:
+            main_module = self._main()
+            send_fn = getattr(main_module, "send_monitoring_message", None)
+            if send_fn and callable(send_fn):
+                await send_fn(message=message)
+        except Exception as e:
+            logger.debug("Failed to send monitoring message: %s", e)
+
     # ------------------ Session & Auth helpers ------------------
     def _sign(self, payload: Dict) -> str:
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -631,6 +644,9 @@ class WebAPIServer:
         try:
             await channel.send(content_str)
             logger.info("User %s sent message to channel %s", uid, channel_id_int)
+            # Log to monitoring channel
+            preview = (content_str[:180] + "…") if len(content_str) > 180 else content_str
+            await self._log_to_discord(f"webui: <@{uid}> sent message to <#{channel_id_int}>: {preview}")
             return web.json_response({"ok": True})
         except Exception as e:
             logger.exception("Failed to send message via web API")
@@ -677,6 +693,8 @@ class WebAPIServer:
             setattr(main_module, "bot_original_activity", activity)
             setattr(main_module, "bot_was_manually_set_offline", False)
             logger.info("User %s set bot status to %s: %s", uid, status_type, status_text)
+            # Log equivalent command to monitoring channel
+            await self._log_to_discord(f"/setstatus {status_type} {status_text} (via web by <@{uid}>)")
             return web.json_response({"ok": True})
         except Exception as e:
             logger.exception("Failed to set status via web API")
@@ -719,6 +737,8 @@ class WebAPIServer:
             main_module = self._main()
             setattr(main_module, "bot_was_manually_set_offline", status_value == 'invisible')
             logger.info("User %s set bot online status to %s", uid, status_value)
+            # Log equivalent command to monitoring channel
+            await self._log_to_discord(f"/setonline {status_value} (via web by <@{uid}>)")
             return web.json_response({"ok": True})
         except Exception as e:
             logger.exception("Failed to set online status via web API")
@@ -743,6 +763,8 @@ class WebAPIServer:
             setattr(main_module, "bot_original_activity", None)
             setattr(main_module, "bot_was_manually_set_offline", False)
             logger.info("User %s cleared bot status", uid)
+            # Log equivalent command to monitoring channel
+            await self._log_to_discord(f"/clearstatus (via web by <@{uid}>)")
             return web.json_response({"ok": True})
         except Exception as e:
             logger.exception("Failed to clear status via web API")
@@ -762,6 +784,7 @@ class WebAPIServer:
         main_module = self._main()
         setattr(main_module, "owner_status_sync_enabled", True)
         logger.info("User %s enabled status sync", uid)
+        await self._log_to_discord(f"/syncme (via web by <@{uid}>)")
         return web.json_response({"ok": True, "enabled": True})
 
     async def handle_sync_disable(self, request: web.Request) -> web.Response:
@@ -778,6 +801,7 @@ class WebAPIServer:
         main_module = self._main()
         setattr(main_module, "owner_status_sync_enabled", False)
         logger.info("User %s disabled status sync", uid)
+        await self._log_to_discord(f"/nosync (via web by <@{uid}>)")
         return web.json_response({"ok": True, "enabled": False})
 
     async def handle_sync_status(self, request: web.Request) -> web.Response:
@@ -836,6 +860,7 @@ class WebAPIServer:
         tracking_data["tracked_user_id"] = user_id_int
         main_module.save_tracking_data(tracking_data)
         logger.info("User %s set tracked user to %s", uid, user_id_int)
+        await self._log_to_discord(f"/settrackuser {user_id_int} (via web by <@{uid}>)")
         return web.json_response({"ok": True, "tracked_user_id": user_id_int})
 
     async def handle_tracking_status(self, request: web.Request) -> web.Response:
@@ -924,6 +949,7 @@ class WebAPIServer:
         }
         main_module.save_tracking_data(tracking_data)
         logger.info("User %s cleared tracking data", uid)
+        await self._log_to_discord(f"/cleartracking (via web by <@{uid}>)")
         return web.json_response({"ok": True})
 
     async def handle_pilot_state(self, request: web.Request) -> web.Response:
@@ -968,6 +994,7 @@ class WebAPIServer:
         enable = state in {"on", "enable", "true"}
         pilot_cog.enabled = enable
         logger.info("User %s %s pilot mode", uid, "enabled" if enable else "disabled")
+        await self._log_to_discord(f"webui: <@{uid}> set pilot {'on' if enable else 'off'}")
         return web.json_response({"ok": True, "enabled": enable})
 
     async def handle_pilot_style(self, request: web.Request) -> web.Response:
@@ -996,6 +1023,7 @@ class WebAPIServer:
         
         pilot_cog.style_mode = mode
         logger.info("User %s set pilot style mode to %s", uid, mode)
+        await self._log_to_discord(f"webui: <@{uid}> set pilot style to {mode}")
         return web.json_response({"ok": True, "style_mode": mode})
 
     async def handle_pilot_chat(self, request: web.Request) -> web.Response:
@@ -1058,7 +1086,11 @@ class WebAPIServer:
         except Exception as e:
             logger.exception("Failed to run pilot chat via web API")
             return web.json_response({"error": "chat_failed"}, status=500)
-
+        try:
+            preview = (message_str[:180] + "…") if len(message_str) > 180 else message_str
+            await self._log_to_discord(f"webui: <@{uid}> pilot chat → {preview}")
+        except Exception:
+            pass
         return web.json_response({"reply": reply})
 
     async def handle_admin_permissions_list(self, request: web.Request) -> web.Response:
@@ -1122,6 +1154,7 @@ class WebAPIServer:
             main_module.delete_allowed_user(user_id)
             self._refresh_allowed_users()
             logger.info("User %s removed all permissions for %s", uid, user_id)
+            await self._log_to_discord(f"webui: <@{uid}> cleared web permissions for <@{user_id}>")
             return web.json_response({"ok": True, "user": {"id": user_id, "permissions": []}})
 
         try:
@@ -1131,6 +1164,12 @@ class WebAPIServer:
 
         self._refresh_allowed_users()
         logger.info("User %s updated permissions for %s: %s", uid, user_id, valid_set)
+        try:
+            await self._log_to_discord(
+                f"webui: <@{uid}> set web permissions for <@{user_id}> → {', '.join(updated)}"
+            )
+        except Exception:
+            pass
         return web.json_response({"ok": True, "user": {"id": user_id, "permissions": updated}})
 
     async def handle_admin_permissions_delete(self, request: web.Request) -> web.Response:
@@ -1152,6 +1191,7 @@ class WebAPIServer:
         removed = main_module.delete_allowed_user(user_id)
         self._refresh_allowed_users()
         logger.info("User %s deleted permissions for %s", uid, user_id)
+        await self._log_to_discord(f"webui: <@{uid}> deleted web permissions for <@{user_id}>")
         return web.json_response({"ok": True, "removed": removed})
 
     async def handle_update_bio(self, request: web.Request) -> web.Response:
@@ -1201,6 +1241,8 @@ class WebAPIServer:
             return web.json_response({"error": "bio_update_failed"}, status=500)
 
         logger.info("User %s updated bot bio", uid)
+        bio_preview = (bio_str[:160] + "…") if len(bio_str) > 160 else bio_str
+        await self._log_to_discord(f"/updatebio {bio_preview} (via web by <@{uid}>)")
         return web.json_response({"ok": True})
 
 
