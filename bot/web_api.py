@@ -28,6 +28,18 @@ def _b64decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + pad)
 
 
+def _mask_secret(value: Optional[str], *, head: int = 4, tail: int = 2) -> str:
+    """Return value with most characters masked to avoid leaking secrets."""
+    if not value:
+        return "<unset>"
+    text = str(value)
+    if len(text) <= head + tail:
+        if len(text) <= 2:
+            return "*" * len(text)
+        return f"{text[0]}***{text[-1]}"
+    return f"{text[:head]}...{text[-tail:]}"
+
+
 class WebAPIServer:
     def __init__(
         self,
@@ -793,6 +805,15 @@ async def start_web_server(
             scheme_hint,
             port,
         )
+    logger.info(
+        "OAuth credentials (masked): client_id=%s client_secret=%s redirect_uri=%s session_secret=%s",
+        _mask_secret(oauth_client_id),
+        _mask_secret(oauth_client_secret),
+        oauth_redirect_uri or "<unset>",
+        _mask_secret(effective_session_secret),
+    )
+    if not missing:
+        logger.info("OAuth configured! Web login endpoints are enabled.")
 
     server = WebAPIServer(
         bot,
