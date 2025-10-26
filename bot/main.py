@@ -750,6 +750,12 @@ async def on_ready():
 # --- end of Pilot chatbot logic moved to bot/pilot_chat.py ---
 
 # --- Original Bot Commands ---
+@tree.command(name='ping', description='report bot latency', guild=CONTROL_GUILD)
+async def ping_command(ctx: commands.Context):
+    """Report the bot gateway latency."""
+    latency_ms = int(round(ctx.bot.latency * 1000))
+    await ctx.send(f"ping: {latency_ms}ms")
+
 @tree.command(name='updatebio', description='update the bot bio', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()
 async def update_bio_command(interaction: discord.Interaction, new_bio: str):
