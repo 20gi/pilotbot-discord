@@ -162,8 +162,21 @@ class WebAPIServer:
 
     def _main(self):
         if self._main_module is None:
-            from . import main as main_module  # type: ignore cyclical import only at runtime
-            self._main_module = main_module
+            import sys
+            # Prefer the already-loaded entry point module to avoid re-importing main.py.
+            for candidate in ("bot.main", "main", "__main__"):
+                mod = sys.modules.get(candidate)
+                if mod and getattr(mod, "__file__", "").endswith(("bot/main.py", "bot\\main.py")):
+                    self._main_module = mod
+                    break
+            if self._main_module is None:
+                # Fallback to importing via the package, covering python -m bot.main invocations.
+                try:
+                    from . import main as main_module  # type: ignore cyclical import only at runtime
+                except ImportError:
+                    import importlib
+                    main_module = importlib.import_module("bot.main")
+                self._main_module = main_module
         return self._main_module
 
     async def _payload(self, request: web.Request) -> Dict:
