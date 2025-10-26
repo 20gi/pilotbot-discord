@@ -8,7 +8,7 @@ COPY webui/ ./
 RUN npm run build
 
 FROM python:3.11-slim AS runtime
-ARG WEB_PORT=8443
+ARG WEB_PORT=8447
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DATA_DIR=/app/data \
