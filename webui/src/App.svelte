@@ -67,6 +67,8 @@
   let session: SessionInfo = { authenticated: false, permissions: [] }
   let loadingSession = true
   let alerts: Alert[] = []
+  let csrfToken: string | null = null
+  let csrfTokenPromise: Promise<string> | null = null
 
   let statusData: any = null
   let syncData: any = null
@@ -185,12 +187,74 @@
     newUserPerms = normalizePermOrder(current)
   }
 
+  function resetCsrfState() {
+    csrfToken = null
+    csrfTokenPromise = null
+  }
+
+  async function ensureCsrfToken(): Promise<string> {
+    if (!session.authenticated) {
+      resetCsrfState()
+      throw new Error('Authentication required')
+    }
+
+    if (csrfToken) {
+      return csrfToken
+    }
+
+    if (!csrfTokenPromise) {
+      csrfTokenPromise = (async () => {
+        try {
+          const response = await fetch('/api/csrf', { credentials: 'include' })
+          if (!response.ok) {
+            if (response.status === 401) {
+              throw new Error('Authentication required')
+            }
+            throw new Error('Failed to fetch CSRF token')
+          }
+          const data = await response.json().catch(() => ({}))
+          const token = typeof data?.csrf_token === 'string' ? data.csrf_token : ''
+          if (!token) {
+            throw new Error('Invalid CSRF token response')
+          }
+          csrfToken = token
+          return token
+        } catch (error) {
+          csrfToken = null
+          throw error
+        } finally {
+          csrfTokenPromise = null
+        }
+      })()
+    }
+
+    const promise = csrfTokenPromise
+    if (!promise) {
+      resetCsrfState()
+      throw new Error('Failed to resolve CSRF token')
+    }
+    const token = await promise
+    if (!token) {
+      resetCsrfState()
+      throw new Error('Missing CSRF token')
+    }
+    return token
+  }
+
   async function apiFetch(path: string, options: RequestInit = {}) {
     const opts: RequestInit = { credentials: 'include', ...options }
     const headers = new Headers(opts.headers as HeadersInit | undefined)
+    const method = (opts.method ?? 'GET').toUpperCase()
     if (opts.body && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json')
     }
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      if (!headers.has('X-CSRF-Token')) {
+        const token = await ensureCsrfToken()
+        headers.set('X-CSRF-Token', token)
+      }
+    }
+    opts.method = method
     opts.headers = headers
     const response = await fetch(path, opts)
     const contentType = response.headers.get('content-type') ?? ''
@@ -202,6 +266,9 @@
     }
 
     if (!response.ok) {
+      if (response.status === 403 && typeof data === 'object' && data?.error === 'csrf_validation_failed') {
+        csrfToken = null
+      }
       const message = typeof data === 'object' && data?.error ? data.error : typeof data === 'string' && data ? data : response.statusText
       throw new Error(message)
     }
@@ -228,8 +295,19 @@
         user: data?.user,
         permissions: data?.permissions ?? [],
       }
+      if (session.authenticated) {
+        try {
+          await ensureCsrfToken()
+        } catch (error) {
+          console.error(error)
+          addAlert('error', 'Failed to fetch CSRF token')
+        }
+      } else {
+        resetCsrfState()
+      }
     } catch (error) {
       session = { authenticated: false, permissions: [] }
+      resetCsrfState()
     } finally {
       loadingSession = false
       ensureActiveTab()

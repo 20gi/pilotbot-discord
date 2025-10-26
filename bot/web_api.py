@@ -4,8 +4,10 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import ssl
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -40,6 +42,31 @@ def _mask_secret(value: Optional[str], *, head: int = 4, tail: int = 2) -> str:
     return f"{text[:head]}...{text[-tail:]}"
 
 
+class RateLimiter:
+    """Simple in-memory rate limiter."""
+    
+    def __init__(self, max_requests: int = 100, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests: Dict[str, List[float]] = defaultdict(list)
+    
+    def is_allowed(self, key: str) -> bool:
+        """Check if request is allowed and record it."""
+        now = time.time()
+        cutoff = now - self.window_seconds
+        
+        # Clean old requests
+        self.requests[key] = [ts for ts in self.requests[key] if ts > cutoff]
+        
+        # Check limit
+        if len(self.requests[key]) >= self.max_requests:
+            return False
+        
+        # Record request
+        self.requests[key].append(now)
+        return True
+
+
 class WebAPIServer:
     def __init__(
         self,
@@ -51,13 +78,33 @@ class WebAPIServer:
         oauth_redirect_uri: Optional[str] = None,
         session_secret: Optional[str] = None,
         allowed_users: Optional[Dict[str, Iterable[str]]] = None,
+        use_https: bool = False,
     ) -> None:
         self.bot = bot
         self.auth_token = auth_token or ""
         self.oauth_client_id = oauth_client_id
         self.oauth_client_secret = oauth_client_secret
         self.oauth_redirect_uri = oauth_redirect_uri
-        self.session_secret = (session_secret or os.getenv("WEB_SESSION_SECRET") or "").encode("utf-8")
+        
+        # Initialize session secret with security checks
+        secret_str = session_secret or os.getenv("WEB_SESSION_SECRET") or ""
+        if not secret_str:
+            # Generate a random secret if none provided (for development)
+            logger.warning(
+                "No WEB_SESSION_SECRET configured! Generating random secret. "
+                "Sessions will not persist across restarts. Set WEB_SESSION_SECRET for production."
+            )
+            secret_str = secrets.token_urlsafe(32)
+        elif len(secret_str) < 16:
+            logger.error(
+                "WEB_SESSION_SECRET is too short (minimum 16 characters). "
+                "Current length: %d. Using it anyway but this is INSECURE.",
+                len(secret_str)
+            )
+        
+        self.session_secret = secret_str.encode("utf-8")
+        self.use_https = use_https
+        
         self.allowed: Dict[str, Set[str]] = {
             str(k): set(v) for k, v in (allowed_users or {}).items()
         }
@@ -77,6 +124,15 @@ class WebAPIServer:
             "pilot_manage",
             "pilot_chat",
         ]
+        
+        # Rate limiters
+        self.rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
+        self.auth_rate_limiter = RateLimiter(max_requests=10, window_seconds=300)  # 10 per 5 min
+        self.pilot_rate_limiter = RateLimiter(max_requests=20, window_seconds=60)
+        
+        # OAuth state tracking (in-memory, expires after 10 minutes)
+        self.oauth_states: Dict[str, float] = {}
+        
         self._main_module = None
         base_path = Path(__file__).resolve().parent
         default_ui = base_path / 'webui' / 'dist'
@@ -92,7 +148,10 @@ class WebAPIServer:
             self.ui_index.is_file(),
         )
 
-        self.app = web.Application(middlewares=[self._session_middleware])
+        self.app = web.Application(
+            middlewares=[self._rate_limit_middleware, self._session_middleware, self._security_headers_middleware],
+            client_max_size=2*1024*1024  # 2MB limit
+        )
         self._setup_routes()
         self._refresh_allowed_users()
 
@@ -114,7 +173,8 @@ class WebAPIServer:
             if obj.get("exp") and int(obj["exp"]) < int(time.time()):
                 return None
             return obj
-        except Exception:
+        except Exception as e:
+            logger.debug("Session verification failed: %s", e)
             return None
 
     def _current_user(self, request: web.Request) -> Optional[Tuple[str, str]]:
@@ -128,12 +188,127 @@ class WebAPIServer:
 
     def _has_perm(self, user_id: str, perm: str) -> bool:
         perms = self.allowed.get(str(user_id))
-        return bool(perms) and (perm in perms or "admin" in perms)
+        has_perm = bool(perms) and (perm in perms or "admin" in perms)
+        if has_perm and "admin" in perms and perm != "admin":
+            logger.info("User %s accessed %s via admin permission", user_id, perm)
+        return has_perm
+
+    def _get_client_ip(self, request: web.Request) -> str:
+        """Get client IP, respecting X-Forwarded-For if behind proxy."""
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.remote or "unknown"
+
+    def _generate_csrf_token(self, user_id: str) -> str:
+        """Generate a CSRF token for a user session."""
+        payload = {
+            "user_id": user_id,
+            "exp": int(time.time()) + 3600,  # 1 hour expiry
+            "nonce": secrets.token_urlsafe(16)
+        }
+        return self._sign(payload)
+
+    def _verify_csrf_token(self, token: str, user_id: str) -> bool:
+        """Verify a CSRF token matches the current user."""
+        if not token:
+            return False
+        obj = self._verify(token)
+        if not obj:
+            return False
+        return obj.get("user_id") == user_id
+
+    @web.middleware
+    async def _rate_limit_middleware(self, request: web.Request, handler):
+        """Apply rate limiting to all requests."""
+        client_ip = self._get_client_ip(request)
+        
+        # Stricter rate limit for auth endpoints
+        if request.path in ["/oauth/callback", "/login"]:
+            if not self.auth_rate_limiter.is_allowed(client_ip):
+                logger.warning("Rate limit exceeded for auth endpoint from %s", client_ip)
+                return web.json_response(
+                    {"error": "rate_limit_exceeded", "message": "Too many authentication attempts"},
+                    status=429
+                )
+        # Stricter rate limit for pilot chat
+        elif request.path == "/api/pilot/chat":
+            if not self.pilot_rate_limiter.is_allowed(client_ip):
+                logger.warning("Rate limit exceeded for pilot chat from %s", client_ip)
+                return web.json_response(
+                    {"error": "rate_limit_exceeded", "message": "Too many chat requests"},
+                    status=429
+                )
+        # General rate limit for API endpoints
+        elif request.path.startswith("/api/"):
+            if not self.rate_limiter.is_allowed(client_ip):
+                logger.warning("Rate limit exceeded from %s", client_ip)
+                return web.json_response(
+                    {"error": "rate_limit_exceeded", "message": "Too many requests"},
+                    status=429
+                )
+        
+        return await handler(request)
 
     @web.middleware
     async def _session_middleware(self, request: web.Request, handler):
         request["user"] = self._current_user(request)
         return await handler(request)
+
+    @web.middleware
+    async def _security_headers_middleware(self, request: web.Request, handler):
+        """Add security headers to all responses."""
+        response = await handler(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        
+        # Content Security Policy
+        if request.path == "/" or request.path.startswith("/assets"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: https:; "
+                "connect-src 'self'; "
+                "font-src 'self' data:; "
+                "frame-ancestors 'none'"
+            )
+        
+        return response
+
+    async def _verify_csrf(self, request: web.Request) -> bool:
+        """Verify CSRF token for state-changing operations."""
+        user = request.get("user")
+        if not user:
+            return False
+        
+        uid, _ = user
+        
+        # Check for CSRF token in header or form data
+        csrf_token = request.headers.get("X-CSRF-Token")
+        if not csrf_token:
+            # Try to get from request body
+            try:
+                if request.content_type == "application/json":
+                    body = await request.json()
+                    csrf_token = body.get("csrf_token")
+                else:
+                    form = await request.post()
+                    csrf_token = form.get("csrf_token")
+            except Exception:
+                pass
+        
+        if not csrf_token:
+            logger.warning("CSRF token missing for %s from user %s", request.path, uid)
+            return False
+        
+        if not self._verify_csrf_token(csrf_token, uid):
+            logger.warning("CSRF token invalid for %s from user %s", request.path, uid)
+            return False
+        
+        return True
 
     # ------------------ Routing ------------------
     def _setup_routes(self) -> None:
@@ -147,6 +322,7 @@ class WebAPIServer:
 
         # API (auth required)
         self.app.router.add_get("/api/session", self.handle_session)
+        self.app.router.add_get("/api/csrf", self.handle_csrf_token)
         self.app.router.add_get("/api/status", self.handle_status)
         self.app.router.add_post("/api/message", self.handle_send_message)
         self.app.router.add_post("/api/set_status", self.handle_set_status)
@@ -221,7 +397,8 @@ class WebAPIServer:
                 data = await request.json()
                 if isinstance(data, dict):
                     return data
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to parse JSON payload: %s", e)
                 return {}
         form = await request.post()
         return {k: form[k] for k in form}
@@ -246,12 +423,22 @@ class WebAPIServer:
     async def handle_login(self, request: web.Request) -> web.Response:
         if not (self.oauth_client_id and self.oauth_redirect_uri):
             return web.Response(status=503, text="OAuth not configured")
+        
+        # Generate and store OAuth state for CSRF protection
+        state = secrets.token_urlsafe(32)
+        self.oauth_states[state] = time.time()
+        
+        # Clean up old states (older than 10 minutes)
+        cutoff = time.time() - 600
+        self.oauth_states = {k: v for k, v in self.oauth_states.items() if v > cutoff}
+        
         params = {
             "client_id": self.oauth_client_id,
             "redirect_uri": self.oauth_redirect_uri,
             "response_type": "code",
             "scope": "identify",
             "prompt": "consent",
+            "state": state,
         }
         from urllib.parse import urlencode
 
@@ -261,9 +448,20 @@ class WebAPIServer:
     async def handle_oauth_callback(self, request: web.Request) -> web.Response:
         if not (self.oauth_client_id and self.oauth_client_secret and self.oauth_redirect_uri and self.session_secret):
             return web.Response(status=503, text="OAuth not configured")
+        
         code = request.query.get("code")
+        state = request.query.get("state")
+        
         if not code:
             return web.Response(status=400, text="Missing code")
+        
+        # Verify OAuth state to prevent CSRF
+        if not state or state not in self.oauth_states:
+            logger.warning("Invalid OAuth state from %s", self._get_client_ip(request))
+            return web.Response(status=400, text="Invalid state parameter")
+        
+        # Remove used state
+        del self.oauth_states[state]
 
         token_data = {
             "client_id": self.oauth_client_id,
@@ -273,27 +471,42 @@ class WebAPIServer:
             "redirect_uri": self.oauth_redirect_uri,
         }
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://discord.com/api/oauth2/token", data=token_data, headers=headers) as resp:
-                if resp.status != 200:
-                    return web.Response(status=resp.status, text=f"Token exchange failed: {await resp.text()}")
-                tok = await resp.json()
-                access_token = tok.get("access_token")
-                if not access_token:
-                    return web.Response(status=400, text="No access token")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://discord.com/api/oauth2/token", data=token_data, headers=headers) as resp:
+                    if resp.status != 200:
+                        logger.error("OAuth token exchange failed: %s", resp.status)
+                        return web.Response(status=500, text="Authentication failed")
+                    tok = await resp.json()
+                    access_token = tok.get("access_token")
+                    if not access_token:
+                        return web.Response(status=500, text="Authentication failed")
 
-            user_headers = {"Authorization": f"Bearer {access_token}"}
-            async with session.get("https://discord.com/api/users/@me", headers=user_headers) as r2:
-                if r2.status != 200:
-                    return web.Response(status=r2.status, text=f"User fetch failed: {await r2.text()}")
-                user = await r2.json()
+                user_headers = {"Authorization": f"Bearer {access_token}"}
+                async with session.get("https://discord.com/api/users/@me", headers=user_headers) as r2:
+                    if r2.status != 200:
+                        logger.error("OAuth user fetch failed: %s", r2.status)
+                        return web.Response(status=500, text="Authentication failed")
+                    user = await r2.json()
+        except Exception as e:
+            logger.exception("OAuth flow error")
+            return web.Response(status=500, text="Authentication failed")
 
         uid = str(user.get("id"))
         name = user.get("global_name") or user.get("username") or uid
         payload = {"id": uid, "name": name, "exp": int(time.time()) + 3600 * 12}
         cookie = self._sign(payload)
         resp = web.HTTPFound("/")
-        resp.set_cookie("session", cookie, httponly=True, secure=False, samesite="Lax", max_age=3600 * 12)
+        resp.set_cookie(
+            "session",
+            cookie,
+            httponly=True,
+            secure=self.use_https,
+            samesite="Lax",
+            max_age=3600 * 12
+        )
+        logger.info("User %s (%s) logged in successfully", name, uid)
         return resp
 
     async def handle_logout(self, request: web.Request) -> web.Response:
@@ -313,6 +526,16 @@ class WebAPIServer:
             "user": {"id": uid, "name": name},
             "permissions": perms,
         })
+
+    async def handle_csrf_token(self, request: web.Request) -> web.Response:
+        """Generate a CSRF token for the current user."""
+        user = request.get("user")
+        if not user:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        
+        uid, _ = user
+        csrf_token = self._generate_csrf_token(uid)
+        return web.json_response({"csrf_token": csrf_token})
 
     async def handle_status(self, request: web.Request) -> web.Response:
         user = request.get("user")
@@ -374,12 +597,20 @@ class WebAPIServer:
         if not self._has_perm(uid, "send_message"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         payload = await self._payload(request)
         channel_id = payload.get("channel_id")
         content = payload.get("content")
 
         if not channel_id or not content:
             return web.json_response({"error": "channel_id_and_content_required"}, status=400)
+
+        # Validate content length (Discord limit)
+        content_str = str(content)
+        if len(content_str) > 2000:
+            return web.json_response({"error": "message_too_long", "max_length": 2000}, status=400)
 
         try:
             channel_id_int = int(str(channel_id))
@@ -390,18 +621,20 @@ class WebAPIServer:
         if channel is None:
             try:
                 channel = await self.bot.fetch_channel(channel_id_int)
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to fetch channel %s: %s", channel_id_int, e)
                 channel = None
 
         if channel is None:
             return web.json_response({"error": "channel_not_found"}, status=404)
 
         try:
-            await channel.send(str(content))
+            await channel.send(content_str)
+            logger.info("User %s sent message to channel %s", uid, channel_id_int)
             return web.json_response({"ok": True})
         except Exception as e:
-            logging.exception("Failed to send message via web API")
-            return web.json_response({"error": str(e)}, status=500)
+            logger.exception("Failed to send message via web API")
+            return web.json_response({"error": "send_failed"}, status=500)
 
     async def handle_set_status(self, request: web.Request) -> web.Response:
         user = request.get("user")
@@ -411,12 +644,19 @@ class WebAPIServer:
         if not self._has_perm(uid, "set_status"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         payload = await self._payload(request)
         status_type = (payload.get("type") or "").lower()
         status_text = payload.get("text") or ""
 
         if not status_text:
             return web.json_response({"error": "text_required"}, status=400)
+
+        # Validate status text length (Discord limit is 128)
+        if len(status_text) > 128:
+            return web.json_response({"error": "status_too_long", "max_length": 128}, status=400)
 
         import discord  # local import to avoid hard dependency if unused
 
@@ -436,10 +676,11 @@ class WebAPIServer:
             main_module = self._main()
             setattr(main_module, "bot_original_activity", activity)
             setattr(main_module, "bot_was_manually_set_offline", False)
+            logger.info("User %s set bot status to %s: %s", uid, status_type, status_text)
             return web.json_response({"ok": True})
         except Exception as e:
-            logging.exception("Failed to set status via web API")
-            return web.json_response({"error": str(e)}, status=500)
+            logger.exception("Failed to set status via web API")
+            return web.json_response({"error": "status_change_failed"}, status=500)
 
     async def handle_set_online_status(self, request: web.Request) -> web.Response:
         user = request.get("user")
@@ -448,6 +689,9 @@ class WebAPIServer:
         uid, _ = user
         if not self._has_perm(uid, "set_online_status"):
             return web.json_response({"error": "forbidden"}, status=403)
+
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
 
         payload = await self._payload(request)
         status_value = (payload.get("status") or payload.get("online_status") or "").lower()
@@ -474,10 +718,11 @@ class WebAPIServer:
             await self.bot.change_presence(status=status_map[status_value], activity=current_activity)
             main_module = self._main()
             setattr(main_module, "bot_was_manually_set_offline", status_value == 'invisible')
+            logger.info("User %s set bot online status to %s", uid, status_value)
             return web.json_response({"ok": True})
         except Exception as e:
-            logging.exception("Failed to set online status via web API")
-            return web.json_response({"error": str(e)}, status=500)
+            logger.exception("Failed to set online status via web API")
+            return web.json_response({"error": "status_change_failed"}, status=500)
 
     async def handle_clear_status(self, request: web.Request) -> web.Response:
         user = request.get("user")
@@ -487,6 +732,9 @@ class WebAPIServer:
         if not self._has_perm(uid, "clear_status"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         import discord
 
         try:
@@ -494,10 +742,11 @@ class WebAPIServer:
             main_module = self._main()
             setattr(main_module, "bot_original_activity", None)
             setattr(main_module, "bot_was_manually_set_offline", False)
+            logger.info("User %s cleared bot status", uid)
             return web.json_response({"ok": True})
         except Exception as e:
-            logging.exception("Failed to clear status via web API")
-            return web.json_response({"error": str(e)}, status=500)
+            logger.exception("Failed to clear status via web API")
+            return web.json_response({"error": "status_clear_failed"}, status=500)
 
     async def handle_sync_enable(self, request: web.Request) -> web.Response:
         user = request.get("user")
@@ -507,8 +756,12 @@ class WebAPIServer:
         if not self._has_perm(uid, "sync_manage"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         main_module = self._main()
         setattr(main_module, "owner_status_sync_enabled", True)
+        logger.info("User %s enabled status sync", uid)
         return web.json_response({"ok": True, "enabled": True})
 
     async def handle_sync_disable(self, request: web.Request) -> web.Response:
@@ -519,8 +772,12 @@ class WebAPIServer:
         if not self._has_perm(uid, "sync_manage"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         main_module = self._main()
         setattr(main_module, "owner_status_sync_enabled", False)
+        logger.info("User %s disabled status sync", uid)
         return web.json_response({"ok": True, "enabled": False})
 
     async def handle_sync_status(self, request: web.Request) -> web.Response:
@@ -564,6 +821,9 @@ class WebAPIServer:
         if not self._has_perm(uid, "tracking_manage"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         payload = await self._payload(request)
         raw_user_id = payload.get("user_id")
         try:
@@ -575,6 +835,7 @@ class WebAPIServer:
         tracking_data = main_module.load_tracking_data()
         tracking_data["tracked_user_id"] = user_id_int
         main_module.save_tracking_data(tracking_data)
+        logger.info("User %s set tracked user to %s", uid, user_id_int)
         return web.json_response({"ok": True, "tracked_user_id": user_id_int})
 
     async def handle_tracking_status(self, request: web.Request) -> web.Response:
@@ -621,7 +882,8 @@ class WebAPIServer:
                         },
                         "duration_text": duration_text,
                     }
-                except Exception:
+                except Exception as e:
+                    logger.debug("Failed to parse session time: %s", e)
                     session_payload = {"join_time": join_time_str}
 
         return web.json_response({
@@ -651,6 +913,9 @@ class WebAPIServer:
         if not self._has_perm(uid, "tracking_manage"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         main_module = self._main()
         tracking_data = {
             "tracked_user_id": None,
@@ -658,6 +923,7 @@ class WebAPIServer:
             "leaderboard": [],
         }
         main_module.save_tracking_data(tracking_data)
+        logger.info("User %s cleared tracking data", uid)
         return web.json_response({"ok": True})
 
     async def handle_pilot_state(self, request: web.Request) -> web.Response:
@@ -688,6 +954,9 @@ class WebAPIServer:
         if not self._has_perm(uid, "pilot_manage"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         pilot_cog = self.bot.get_cog("PilotChatCog")
         if not pilot_cog:
             return web.json_response({"error": "pilot_not_available"}, status=503)
@@ -698,6 +967,7 @@ class WebAPIServer:
             return web.json_response({"error": "invalid_state"}, status=400)
         enable = state in {"on", "enable", "true"}
         pilot_cog.enabled = enable
+        logger.info("User %s %s pilot mode", uid, "enabled" if enable else "disabled")
         return web.json_response({"ok": True, "enabled": enable})
 
     async def handle_pilot_style(self, request: web.Request) -> web.Response:
@@ -708,6 +978,9 @@ class WebAPIServer:
         if not self._has_perm(uid, "pilot_manage"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         pilot_cog = self.bot.get_cog("PilotChatCog")
         if not pilot_cog:
             return web.json_response({"error": "pilot_not_available"}, status=503)
@@ -716,7 +989,13 @@ class WebAPIServer:
         mode = (payload.get("mode") or '').lower()
         if not mode:
             return web.json_response({"error": "mode_required"}, status=400)
+        
+        # Validate mode length to prevent abuse
+        if len(mode) > 50:
+            return web.json_response({"error": "mode_too_long"}, status=400)
+        
         pilot_cog.style_mode = mode
+        logger.info("User %s set pilot style mode to %s", uid, mode)
         return web.json_response({"ok": True, "style_mode": mode})
 
     async def handle_pilot_chat(self, request: web.Request) -> web.Response:
@@ -727,6 +1006,9 @@ class WebAPIServer:
         if not self._has_perm(uid, "pilot_chat"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         pilot_cog = self.bot.get_cog("PilotChatCog")
         if not pilot_cog:
             return web.json_response({"error": "pilot_not_available"}, status=503)
@@ -736,32 +1018,46 @@ class WebAPIServer:
         if not message:
             return web.json_response({"error": "message_required"}, status=400)
 
+        # Validate message length
+        message_str = str(message)
+        if len(message_str) > 2000:
+            return web.json_response({"error": "message_too_long", "max_length": 2000}, status=400)
+
         history = payload.get("history")
         if history and not isinstance(history, list):
             return web.json_response({"error": "history_must_be_list"}, status=400)
         if isinstance(history, list):
+            # Limit history size to prevent abuse
+            if len(history) > 50:
+                return web.json_response({"error": "history_too_long", "max_length": 50}, status=400)
+            
             cleaned_history: List[Dict[str, str]] = []
             for item in history:
                 if isinstance(item, dict):
                     role = item.get("role")
                     content = item.get("content")
                     if role in {"user", "assistant"} and content:
-                        cleaned_history.append({"role": str(role), "content": str(content)})
+                        # Limit individual history message length
+                        content_str = str(content)
+                        if len(content_str) > 2000:
+                            content_str = content_str[:2000]
+                        cleaned_history.append({"role": str(role), "content": content_str})
             history = cleaned_history
 
         try:
             reply = await pilot_cog.generate_web_reply(
                 username=payload.get("username") or name,
-                content=str(message),
+                content=message_str,
                 history=history,
             )
         except RuntimeError as e:
             if str(e) == "pilot_chat_disabled":
                 return web.json_response({"error": "pilot_disabled"}, status=409)
-            raise
+            logger.exception("Pilot chat error")
+            return web.json_response({"error": "chat_failed"}, status=500)
         except Exception as e:
-            logging.exception("Failed to run pilot chat via web API")
-            return web.json_response({"error": str(e)}, status=500)
+            logger.exception("Failed to run pilot chat via web API")
+            return web.json_response({"error": "chat_failed"}, status=500)
 
         return web.json_response({"reply": reply})
 
@@ -791,6 +1087,9 @@ class WebAPIServer:
         uid, _ = user
         if not self._has_perm(uid, "admin"):
             return web.json_response({"error": "forbidden"}, status=403)
+
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
 
         payload = await self._payload(request)
         user_id = str(payload.get("user_id") or payload.get("id") or "").strip()
@@ -822,6 +1121,7 @@ class WebAPIServer:
         if not valid_set:
             main_module.delete_allowed_user(user_id)
             self._refresh_allowed_users()
+            logger.info("User %s removed all permissions for %s", uid, user_id)
             return web.json_response({"ok": True, "user": {"id": user_id, "permissions": []}})
 
         try:
@@ -830,6 +1130,7 @@ class WebAPIServer:
             return web.json_response({"error": "user_id_required"}, status=400)
 
         self._refresh_allowed_users()
+        logger.info("User %s updated permissions for %s: %s", uid, user_id, valid_set)
         return web.json_response({"ok": True, "user": {"id": user_id, "permissions": updated}})
 
     async def handle_admin_permissions_delete(self, request: web.Request) -> web.Response:
@@ -840,6 +1141,9 @@ class WebAPIServer:
         if not self._has_perm(uid, "admin"):
             return web.json_response({"error": "forbidden"}, status=403)
 
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
         user_id = request.match_info.get("user_id", "").strip()
         if not user_id:
             return web.json_response({"error": "user_id_required"}, status=400)
@@ -847,6 +1151,7 @@ class WebAPIServer:
         main_module = self._main()
         removed = main_module.delete_allowed_user(user_id)
         self._refresh_allowed_users()
+        logger.info("User %s deleted permissions for %s", uid, user_id)
         return web.json_response({"ok": True, "removed": removed})
 
     async def handle_update_bio(self, request: web.Request) -> web.Response:
@@ -856,6 +1161,9 @@ class WebAPIServer:
         uid, _ = user
         if not self._has_perm(uid, "update_bio"):
             return web.json_response({"error": "forbidden"}, status=403)
+
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
 
         if request.content_type == "application/json":
             try:
@@ -870,22 +1178,29 @@ class WebAPIServer:
         if not bio_text:
             return web.json_response({"error": "bio_required"}, status=400)
 
+        # Validate bio length (Discord limit is 190 characters)
+        bio_str = str(bio_text)
+        if len(bio_str) > 190:
+            return web.json_response({"error": "bio_too_long", "max_length": 190}, status=400)
+
         # Patch Discord user profile using bot token
         url = "https://discord.com/api/v10/users/@me"
         headers = {
             "Authorization": f"Bot {self.bot.http.token}",
             "Content-Type": "application/json",
         }
-        data = {"bio": bio_text}
+        data = {"bio": bio_str}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.patch(url, json=data, headers=headers) as response:
                     if response.status != 200:
-                        return web.json_response({"error": await response.text()}, status=response.status)
+                        logger.error("Failed to update bio: %s", response.status)
+                        return web.json_response({"error": "bio_update_failed"}, status=500)
         except Exception as e:
-            logging.exception("Failed to update bio via web API")
-            return web.json_response({"error": str(e)}, status=500)
+            logger.exception("Failed to update bio via web API")
+            return web.json_response({"error": "bio_update_failed"}, status=500)
 
+        logger.info("User %s updated bot bio", uid)
         return web.json_response({"ok": True})
 
 
@@ -956,6 +1271,7 @@ async def start_web_server(
         oauth_redirect_uri=oauth_redirect_uri,
         session_secret=session_secret,
         allowed_users=allowed_users,
+        use_https=bool(ssl_context),
     )
     runner = web.AppRunner(server.app)
     await runner.setup()
