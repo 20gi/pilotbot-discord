@@ -152,11 +152,12 @@ OPTIONS.setdefault('chutes_model', 'deepseek-ai/DeepSeek-V3-0324')
 DATA_DIR = DEFAULT_DATA_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-TRACKING_DATA_PATH = Path(
-    OPTIONS.get('tracking_data_path')
-    or os.getenv('TRACKING_DATA_PATH', DATA_DIR / 'lillian_tracking.json')
-)
-TRACKING_DATA_PATH = Path(TRACKING_DATA_PATH)
+raw_tracking_path = OPTIONS.get('tracking_data_path') or os.getenv('TRACKING_DATA_PATH')
+if raw_tracking_path:
+    TRACKING_DATA_PATH = Path(raw_tracking_path)
+else:
+    TRACKING_DATA_PATH = DATA_DIR / 'lillian_tracking.json'
+
 if TRACKING_DATA_PATH.is_dir():
     logger.warning(
         "TRACKING_DATA_PATH points to a directory (%s); defaulting to file within that directory",
@@ -933,12 +934,16 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.followup.send('ew who are you you cant tell me what to do', ephemeral=True)
         return
     else:
-        # Generic error for other issues
-        try:
-            await interaction.response.send_message('an error occurred', ephemeral=True)
-        except discord.InteractionResponded:
-            await interaction.followup.send('an error occurred', ephemeral=True)
+        # Log the actual error before notifying the user
         logger.exception("Application command error: %s", error)
+        # Try to respond, but catch if already responded
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message('an error occurred', ephemeral=True)
+            else:
+                await interaction.followup.send('an error occurred', ephemeral=True)
+        except Exception as exc:
+            logger.error("Failed to send error message: %s", exc)
         return
 
 def resolve_bot_token():
