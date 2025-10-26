@@ -1,5 +1,5 @@
 name: "Pilot Bot"
-version: "1.0.0"
+version: "1.1.0"
 slug: "pilot_discord_bot"
 description: "Personal Discord bot."
 arch:
