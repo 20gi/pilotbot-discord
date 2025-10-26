@@ -292,6 +292,7 @@ class WrongChannelError(app_commands.CheckFailure):
 # --- Tracking Data Management ---
 def load_tracking_data():
     """Load tracking data from JSON file"""
+    global TRACKING_DATA_PATH
     try:
         with TRACKING_DATA_PATH.open('r', encoding='utf-8') as f:
             return json.load(f)
@@ -316,7 +317,6 @@ def load_tracking_data():
         if new_path == directory_path:
             new_path = DATA_DIR / 'lillian_tracking.json'
         # Update the global path so subsequent calls use the file
-        global TRACKING_DATA_PATH
         TRACKING_DATA_PATH = new_path
         TRACKING_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Updated TRACKING_DATA_PATH to %s after directory fallback", TRACKING_DATA_PATH.resolve())
