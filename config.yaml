@@ -15,6 +15,20 @@ options:
   pilot_response_channel_id: ""
   pilot_enabled: false
   pilot_style_mode: "default"
+  web_port: 8443
+  web_ssl_cert_path: ""
+  web_ssl_key_path: ""
+  web_auth_token: ""
+  web_oauth_client_id: ""
+  web_oauth_client_secret: ""
+  web_oauth_redirect_uri: ""
+  web_session_secret: ""
+  # Allowed users can be a mapping of id -> list of perms
+  # or a list of {id, perms}. Supported perms include:
+  # view, set_status, set_online_status, clear_status, update_bio, send_message,
+  # sync_view, sync_manage, tracking_view, tracking_manage,
+  # pilot_view, pilot_manage, pilot_chat, admin
+  web_allowed_users: {}
 schema:
   bot_token: "password"
   chutes_api_key: "password"
@@ -23,3 +37,12 @@ schema:
   pilot_response_channel_id: "str?"
   pilot_enabled: "bool"
   pilot_style_mode: "str"
+  web_port: "int"
+  web_ssl_cert_path: "str?"
+  web_ssl_key_path: "str?"
+  web_auth_token: "password?"
+  web_oauth_client_id: "str?"
+  web_oauth_client_secret: "password?"
+  web_oauth_redirect_uri: "str?"
+  web_session_secret: "password?"
+  web_allowed_users: "dict?"

@@ -269,6 +269,37 @@ class PilotChatCog(commands.Cog):
         logging.info("Pilot style_mode set to %s by %s", self.style_mode, getattr(interaction.user, 'name', 'unknown'))
         await interaction.response.send_message(f"style set to: {self.style_mode}")
 
+    async def generate_web_reply(
+        self,
+        *,
+        username: str,
+        content: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        """Generate a Pilot Chat reply for the web dashboard.
+
+        History should be a list of dicts matching OpenAI roles: [{'role': 'user', 'content': '...'}].
+        """
+        if not self.enabled:
+            raise RuntimeError("pilot_chat_disabled")
+        if not content:
+            raise ValueError("content_required")
+
+        chat_messages: List[Dict[str, str]] = [{'role': 'system', 'content': self._build_system_prompt()}]
+        if history:
+            for item in history:
+                role = item.get('role')
+                text = item.get('content')
+                if role not in {'user', 'assistant'}:
+                    continue
+                if not text:
+                    continue
+                chat_messages.append({'role': role, 'content': str(text)})
+
+        chat_messages.append({'role': 'user', 'content': f"from {username}: {content}"})
+        reply = await self._call_llm(chat_messages)
+        return self._sanitize_reply(reply)
+
 
 async def setup_pilot_chat(
     bot: commands.Bot,

@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import asyncio
 import yaml
 from pilot_chat import setup_pilot_chat
+import ssl
+from web_api import start_web_server, DEFAULT_WEB_PORT
 
 # silly messages version
 # Bot setup
@@ -374,6 +376,77 @@ async def on_ready():
         activity=discord.Activity(type=discord.ActivityType.watching, name="i hate dusekkar")
     )
     print("Status set to: Watching i hate dusekkar")
+
+    # --- Start Web API server (HTTPS if certs provided) ---
+    web_port = options.get('web_port', DEFAULT_WEB_PORT)
+    try:
+        web_port = int(web_port)
+    except Exception:
+        web_port = DEFAULT_WEB_PORT
+
+    cert_path = options.get('web_ssl_cert_path') or os.getenv('WEB_SSL_CERT_PATH')
+    key_path = options.get('web_ssl_key_path') or os.getenv('WEB_SSL_KEY_PATH')
+    auth_token = options.get('web_auth_token') or os.getenv('WEB_AUTH_TOKEN') or ""
+
+    # Discord OAuth config for Web UI
+    oauth_client_id = options.get('web_oauth_client_id') or os.getenv('WEB_OAUTH_CLIENT_ID')
+    oauth_client_secret = options.get('web_oauth_client_secret') or os.getenv('WEB_OAUTH_CLIENT_SECRET')
+    oauth_redirect_uri = options.get('web_oauth_redirect_uri') or os.getenv('WEB_OAUTH_REDIRECT_URI')
+    session_secret = options.get('web_session_secret') or os.getenv('WEB_SESSION_SECRET')
+
+    # Allowed users and permissions
+    allowed_users = {}
+    raw_allowed = options.get('web_allowed_users') or os.getenv('WEB_ALLOWED_USERS')
+    # Support multiple formats: dict mapping, list of {id, perms}, or CSV string "id:perm|perm,id2:view"
+    try:
+        if isinstance(raw_allowed, dict):
+            for k, v in raw_allowed.items():
+                if isinstance(v, (list, tuple)):
+                    allowed_users[str(k)] = list(v)
+        elif isinstance(raw_allowed, list):
+            for item in raw_allowed:
+                if isinstance(item, dict) and 'id' in item and 'perms' in item:
+                    perms = item['perms'] if isinstance(item['perms'], list) else str(item['perms']).split('|')
+                    allowed_users[str(item['id'])] = [p.strip() for p in perms if p.strip()]
+        elif isinstance(raw_allowed, str):
+            # id:perm|perm,id2:view
+            for part in raw_allowed.split(','):
+                part = part.strip()
+                if not part:
+                    continue
+                if ':' not in part:
+                    continue
+                uid, perms = part.split(':', 1)
+                allowed_users[str(uid.strip())] = [p.strip() for p in perms.split('|') if p.strip()]
+    except Exception as e:
+        print(f"Failed to parse web_allowed_users: {e}")
+
+    ssl_context = None
+    if cert_path and key_path and os.path.exists(str(cert_path)) and os.path.exists(str(key_path)):
+        try:
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+            print(f"Configured HTTPS with cert={cert_path} key={key_path}")
+        except Exception as e:
+            print(f"Failed to configure SSL, falling back to HTTP: {e}")
+            ssl_context = None
+    else:
+        print("SSL cert/key not provided or not found; starting Web API over HTTP")
+
+    if not getattr(bot, '_web_server_started', False):
+        await start_web_server(
+            bot,
+            host='0.0.0.0',
+            port=web_port,
+            ssl_context=ssl_context,
+            auth_token=auth_token,
+            oauth_client_id=oauth_client_id,
+            oauth_client_secret=oauth_client_secret,
+            oauth_redirect_uri=oauth_redirect_uri,
+            session_secret=session_secret,
+            allowed_users=allowed_users,
+        )
+        setattr(bot, '_web_server_started', True)
 
 # --- end of Pilot chatbot logic moved to bot/pilot_chat.py ---
 
