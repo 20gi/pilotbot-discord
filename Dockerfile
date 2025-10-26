@@ -8,9 +8,11 @@ COPY webui/ ./
 RUN npm run build
 
 FROM python:3.11-slim AS runtime
+ARG WEB_PORT=8443
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DATA_DIR=/app/data
+    DATA_DIR=/app/data \
+    WEB_PORT=${WEB_PORT}
 WORKDIR /app
 
 COPY bot/requirements.txt ./
@@ -21,6 +23,6 @@ COPY --from=web_builder /webui/dist ./webui/dist
 
 RUN mkdir -p /app/data
 
-EXPOSE 8443
+EXPOSE ${WEB_PORT}
 
 CMD ["python", "-u", "bot/main.py"]
