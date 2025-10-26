@@ -717,7 +717,7 @@
           <span class="denied-icon">🔒</span>
           <h2 class="text-2xl font-semibold text-white/90">Access denied</h2>
           <p class="text-white/60 max-w-md">
-            You signed in successfully, but your account doesn’t have permission to use the control deck yet. Reach out to an admin if you need access.
+            Who are you... You do not have permission to access any sections of the Pilot's Cockpit.
           </p>
           <a class="glass-action" href={logoutUrl}>Log out</a>
         </div>
