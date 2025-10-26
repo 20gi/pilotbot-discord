@@ -157,6 +157,12 @@ TRACKING_DATA_PATH = Path(
     or os.getenv('TRACKING_DATA_PATH', DATA_DIR / 'lillian_tracking.json')
 )
 TRACKING_DATA_PATH = Path(TRACKING_DATA_PATH)
+if TRACKING_DATA_PATH.is_dir():
+    logger.warning(
+        "TRACKING_DATA_PATH points to a directory (%s); defaulting to file within that directory",
+        TRACKING_DATA_PATH,
+    )
+    TRACKING_DATA_PATH = (TRACKING_DATA_PATH / 'lillian_tracking.json')
 TRACKING_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # --- Discord bot setup -----------------------------------------------------
@@ -932,7 +938,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.response.send_message('an error occurred', ephemeral=True)
         except discord.InteractionResponded:
             await interaction.followup.send('an error occurred', ephemeral=True)
-        raise error
+        logger.exception("Application command error: %s", error)
+        return
 
 def resolve_bot_token():
     """Resolve the Discord bot token from environment variables or configuration."""
