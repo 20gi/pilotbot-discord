@@ -233,7 +233,8 @@ intents = discord.Intents.default()
 intents.members = True  # Required for member join/leave events
 intents.presences = True  # Required for tracking owner's presence
 intents.message_content = True  # Required for reading messages to build history
-bot = commands.Bot(command_prefix='!', intents=intents)
+# Remove legacy '!' prefix commands; keep only mention (for safety)
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
 # --- Pilot Chat Cog holder ---
 PILOT_COG = None
@@ -750,11 +751,10 @@ async def on_ready():
 # --- end of Pilot chatbot logic moved to bot/pilot_chat.py ---
 
 # --- Original Bot Commands ---
-@tree.command(name='ping', description='report bot latency', guild=CONTROL_GUILD)
-async def ping_command(ctx: commands.Context):
-    """Report the bot gateway latency."""
-    latency_ms = int(round(ctx.bot.latency * 1000))
-    await ctx.send(f"ping: {latency_ms}ms")
+@tree.command(name='ping', description='show bot latency', guild=CONTROL_GUILD)
+async def ping_slash(interaction: discord.Interaction):
+    ms = int(round(bot.latency * 1000))
+    await interaction.response.send_message(f"ping: {ms}ms")
 
 @tree.command(name='updatebio', description='update the bot bio', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()

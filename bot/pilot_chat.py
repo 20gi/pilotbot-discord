@@ -164,8 +164,7 @@ class PilotChatCog(commands.Cog):
         if message.author.bot:
             return
 
-        # Allow other commands to be processed
-        await self.bot.process_commands(message)
+        # No prefix commands; skip processing command messages
 
         if not self.enabled:
             return
