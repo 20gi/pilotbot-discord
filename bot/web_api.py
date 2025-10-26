@@ -13,6 +13,8 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from aiohttp import web
 import aiohttp
 
+logger = logging.getLogger(__name__)
+
 # Default fallback port if none provided via Home Assistant options
 DEFAULT_WEB_PORT = 8443
 
@@ -48,9 +50,19 @@ class WebAPIServer:
             str(k): set(v) for k, v in (allowed_users or {}).items()
         }
         self._main_module = None
-        default_ui = Path(__file__).resolve().parent / 'webui' / 'dist'
+        base_path = Path(__file__).resolve().parent
+        default_ui = base_path / 'webui' / 'dist'
+        if not default_ui.exists():
+            alt_ui = base_path.parent / 'webui' / 'dist'
+            if alt_ui.exists():
+                default_ui = alt_ui
         self.ui_root = Path(os.getenv('WEB_UI_DIST') or default_ui)
         self.ui_index = self.ui_root / 'index.html'
+        logger.info(
+            "Web UI static root set to %s (index exists=%s)",
+            self.ui_root,
+            self.ui_index.is_file(),
+        )
 
         self.app = web.Application(middlewares=[self._session_middleware])
         self._setup_routes()
@@ -127,7 +139,12 @@ class WebAPIServer:
         if self.ui_root.is_dir():
             assets_dir = self.ui_root / 'assets'
             if assets_dir.is_dir():
+                logger.info("Serving static assets from %s", assets_dir)
                 self.app.router.add_static('/assets', str(assets_dir), show_index=False)
+            else:
+                logger.warning("Assets directory missing at %s; UI may not load correctly", assets_dir)
+        else:
+            logger.warning("Web UI root %s does not exist; serving fallback HTML", self.ui_root)
 
         self.app.router.add_get('/{tail:.*}', self.handle_index)
 
@@ -744,6 +761,15 @@ async def start_web_server(
 
     Uses AppRunner + TCPSite so it runs within the existing event loop.
     """
+    logger.info(
+        "Initializing Web API server host=%s port=%s ssl=%s oauth_client=%s allowed_users=%d",
+        host,
+        port,
+        bool(ssl_context),
+        oauth_client_id,
+        len(allowed_users or {}),
+    )
+
     server = WebAPIServer(
         bot,
         auth_token=auth_token,
@@ -757,10 +783,14 @@ async def start_web_server(
     await runner.setup()
 
     site = web.TCPSite(runner, host=host, port=int(port), ssl_context=ssl_context)
-    await site.start()
+    try:
+        await site.start()
+    except Exception:
+        logger.exception("Failed to start Web API server on %s:%s", host, port)
+        raise
 
     scheme = "https" if ssl_context else "http"
-    logging.info("Web API server started on %s://%s:%s", scheme, host, port)
+    logger.info("Web API server started on %s://%s:%s", scheme, host, port)
 
     # Keep a reference on the bot for potential future shutdown
     setattr(bot, "_web_api_runner", runner)

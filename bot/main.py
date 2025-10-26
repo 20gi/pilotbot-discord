@@ -434,19 +434,32 @@ async def on_ready():
         print("SSL cert/key not provided or not found; starting Web API over HTTP")
 
     if not getattr(bot, '_web_server_started', False):
-        await start_web_server(
-            bot,
-            host='0.0.0.0',
-            port=web_port,
-            ssl_context=ssl_context,
-            auth_token=auth_token,
-            oauth_client_id=oauth_client_id,
-            oauth_client_secret=oauth_client_secret,
-            oauth_redirect_uri=oauth_redirect_uri,
-            session_secret=session_secret,
-            allowed_users=allowed_users,
+        logging.info(
+            "Launching web API host=0.0.0.0 port=%s ssl=%s oauth_client_id=%s allowed_users=%d",
+            web_port,
+            bool(ssl_context),
+            oauth_client_id,
+            len(allowed_users),
         )
-        setattr(bot, '_web_server_started', True)
+        try:
+            await start_web_server(
+                bot,
+                host='0.0.0.0',
+                port=web_port,
+                ssl_context=ssl_context,
+                auth_token=auth_token,
+                oauth_client_id=oauth_client_id,
+                oauth_client_secret=oauth_client_secret,
+                oauth_redirect_uri=oauth_redirect_uri,
+                session_secret=session_secret,
+                allowed_users=allowed_users,
+            )
+        except Exception as e:
+            logging.exception("Web API failed to start on port %s: %s", web_port, e)
+            # Surface the failure prominently in HA logs
+            print(f"Web API failed to start on port {web_port}: {e}")
+        else:
+            setattr(bot, '_web_server_started', True)
 
 # --- end of Pilot chatbot logic moved to bot/pilot_chat.py ---
 
