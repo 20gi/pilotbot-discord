@@ -182,7 +182,6 @@ body {
   position: absolute;
   inset: -20% -30% auto;
   height: 55%;
-  background: radial-gradient(circle, rgba(var(--app-accent-danger-color-rgb, 248 113 113) / 0.28), transparent 70%);
   mix-blend-mode: screen;
 }
 
