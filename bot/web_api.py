@@ -61,6 +61,22 @@ class WebAPIServer:
         self.allowed: Dict[str, Set[str]] = {
             str(k): set(v) for k, v in (allowed_users or {}).items()
         }
+        self.known_permissions: List[str] = [
+            "admin",
+            "view",
+            "set_status",
+            "set_online_status",
+            "clear_status",
+            "send_message",
+            "update_bio",
+            "sync_view",
+            "sync_manage",
+            "tracking_view",
+            "tracking_manage",
+            "pilot_view",
+            "pilot_manage",
+            "pilot_chat",
+        ]
         self._main_module = None
         base_path = Path(__file__).resolve().parent
         default_ui = base_path / 'webui' / 'dist'
@@ -78,6 +94,7 @@ class WebAPIServer:
 
         self.app = web.Application(middlewares=[self._session_middleware])
         self._setup_routes()
+        self._refresh_allowed_users()
 
     # ------------------ Session & Auth helpers ------------------
     def _sign(self, payload: Dict) -> str:
@@ -148,6 +165,11 @@ class WebAPIServer:
         self.app.router.add_post("/api/pilot/style", self.handle_pilot_style)
         self.app.router.add_post("/api/pilot/chat", self.handle_pilot_chat)
 
+        # Admin
+        self.app.router.add_get("/api/admin/permissions", self.handle_admin_permissions_list)
+        self.app.router.add_post("/api/admin/permissions", self.handle_admin_permissions_upsert)
+        self.app.router.add_delete("/api/admin/permissions/{user_id}", self.handle_admin_permissions_delete)
+
         if self.ui_root.is_dir():
             assets_dir = self.ui_root / 'assets'
             if assets_dir.is_dir():
@@ -178,6 +200,20 @@ class WebAPIServer:
                     main_module = importlib.import_module("bot.main")
                 self._main_module = main_module
         return self._main_module
+
+    def _refresh_allowed_users(self) -> None:
+        main_module = self._main()
+        store = getattr(main_module, "WEB_ALLOWED_USERS", None)
+        if not isinstance(store, dict):
+            return
+        refreshed: Dict[str, Set[str]] = {}
+        for uid, perms in store.items():
+            if isinstance(perms, (list, tuple, set)):
+                normalized = {str(p).strip() for p in perms if str(p).strip()}
+            else:
+                continue
+            refreshed[str(uid)] = normalized
+        self.allowed = refreshed
 
     async def _payload(self, request: web.Request) -> Dict:
         if request.content_type == "application/json":
@@ -728,6 +764,90 @@ class WebAPIServer:
             return web.json_response({"error": str(e)}, status=500)
 
         return web.json_response({"reply": reply})
+
+    async def handle_admin_permissions_list(self, request: web.Request) -> web.Response:
+        user = request.get("user")
+        if not user:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        uid, _ = user
+        if not self._has_perm(uid, "admin"):
+            return web.json_response({"error": "forbidden"}, status=403)
+
+        self._refresh_allowed_users()
+        users_payload = [
+            {"id": user_id, "permissions": sorted(perms)}
+            for user_id, perms in sorted(self.allowed.items())
+        ]
+        available = sorted(set(self.known_permissions) | {perm for perms in self.allowed.values() for perm in perms})
+        return web.json_response({
+            "users": users_payload,
+            "available_permissions": available,
+        })
+
+    async def handle_admin_permissions_upsert(self, request: web.Request) -> web.Response:
+        user = request.get("user")
+        if not user:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        uid, _ = user
+        if not self._has_perm(uid, "admin"):
+            return web.json_response({"error": "forbidden"}, status=403)
+
+        payload = await self._payload(request)
+        user_id = str(payload.get("user_id") or payload.get("id") or "").strip()
+        if not user_id:
+            return web.json_response({"error": "user_id_required"}, status=400)
+
+        raw_perms = payload.get("permissions") or payload.get("perms") or []
+        perms_list: List[str] = []
+        if isinstance(raw_perms, list):
+            source = raw_perms
+        elif isinstance(raw_perms, str):
+            source = [part.strip() for part in raw_perms.replace('|', ',').split(',')]
+        else:
+            source = []
+        for perm in source:
+            text = str(perm).strip()
+            if text:
+                perms_list.append(text)
+
+        valid_set = []
+        known = set(self.known_permissions)
+        for perms in self.allowed.values():
+            known.update(perms)
+        for perm in perms_list:
+            if perm in known and perm not in valid_set:
+                valid_set.append(perm)
+
+        main_module = self._main()
+        if not valid_set:
+            main_module.delete_allowed_user(user_id)
+            self._refresh_allowed_users()
+            return web.json_response({"ok": True, "user": {"id": user_id, "permissions": []}})
+
+        try:
+            updated = main_module.set_allowed_user_permissions(user_id, valid_set)
+        except ValueError:
+            return web.json_response({"error": "user_id_required"}, status=400)
+
+        self._refresh_allowed_users()
+        return web.json_response({"ok": True, "user": {"id": user_id, "permissions": updated}})
+
+    async def handle_admin_permissions_delete(self, request: web.Request) -> web.Response:
+        user = request.get("user")
+        if not user:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        uid, _ = user
+        if not self._has_perm(uid, "admin"):
+            return web.json_response({"error": "forbidden"}, status=403)
+
+        user_id = request.match_info.get("user_id", "").strip()
+        if not user_id:
+            return web.json_response({"error": "user_id_required"}, status=400)
+
+        main_module = self._main()
+        removed = main_module.delete_allowed_user(user_id)
+        self._refresh_allowed_users()
+        return web.json_response({"ok": True, "removed": removed})
 
     async def handle_update_bio(self, request: web.Request) -> web.Response:
         user = request.get("user")

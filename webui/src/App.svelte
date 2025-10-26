@@ -24,6 +24,7 @@
     },
     { id: 'sync', label: 'Owner Sync', required: ['sync_view', 'sync_manage'] },
     { id: 'tracking', label: 'Tracking', required: ['tracking_view', 'tracking_manage'] },
+    { id: 'access', label: 'Access Control', required: ['admin'] },
     { id: 'pilot', label: 'Pilot Config', required: ['pilot_view', 'pilot_manage'] },
     { id: 'pilot-chat', label: 'Pilot Chat', required: ['pilot_chat'] },
   ] as const
@@ -70,6 +71,11 @@
   let trackingStatus: any = null
   let trackingLeaderboard: any[] = []
   let pilotState: any = null
+  let permissionsData: { id: string; permissions: string[] }[] = []
+  let permissionsDraft: Record<string, string[]> = {}
+  let availablePermissions: string[] = []
+  let newUserId = ''
+  let newUserPerms: string[] = []
 
   let statusForm = { type: 'playing', text: '' }
   let onlineStatus = 'online'
@@ -129,6 +135,52 @@
       return 'border-rose-500/50 bg-rose-500/10 text-rose-100'
     }
     return 'border-sky-400/40 bg-sky-400/10 text-sky-100'
+  }
+
+  function normalizePermOrder(perms: string[]): string[] {
+    if (!perms || perms.length === 0) return []
+    const unique: string[] = []
+    for (const perm of perms) {
+      const text = perm.trim()
+      if (text && !unique.includes(text)) {
+        unique.push(text)
+      }
+    }
+    if (unique.length <= 1) return unique
+    const order = new Map(availablePermissions.map((perm, index) => [perm, index]))
+    const fallback = availablePermissions.length + 100
+    return unique.sort((a, b) => {
+      const ai = order.has(a) ? order.get(a)! : fallback
+      const bi = order.has(b) ? order.get(b)! : fallback
+      if (ai !== bi) return ai - bi
+      return a.localeCompare(b)
+    })
+  }
+
+  function setDraftPermissions(userId: string, perms: string[]) {
+    permissionsDraft = { ...permissionsDraft, [userId]: normalizePermOrder(perms) }
+  }
+
+  function toggleExistingPermission(userId: string, perm: string, enabled: boolean) {
+    const current = permissionsDraft[userId] ? [...permissionsDraft[userId]] : []
+    const idx = current.indexOf(perm)
+    if (enabled && idx === -1) {
+      current.push(perm)
+    } else if (!enabled && idx !== -1) {
+      current.splice(idx, 1)
+    }
+    setDraftPermissions(userId, current)
+  }
+
+  function toggleNewUserPermission(perm: string, enabled: boolean) {
+    const current = [...newUserPerms]
+    const idx = current.indexOf(perm)
+    if (enabled && idx === -1) {
+      current.push(perm)
+    } else if (!enabled && idx !== -1) {
+      current.splice(idx, 1)
+    }
+    newUserPerms = normalizePermOrder(current)
   }
 
   async function apiFetch(path: string, options: RequestInit = {}) {
@@ -206,6 +258,18 @@
     }
   }
 
+  async function refreshPermissions() {
+    const data = await apiFetch('/api/admin/permissions')
+    availablePermissions = data?.available_permissions ?? []
+    permissionsData = data?.users ?? []
+    const draft: Record<string, string[]> = {}
+    for (const entry of permissionsData) {
+      const perms = Array.isArray(entry.permissions) ? entry.permissions : []
+      draft[entry.id] = normalizePermOrder(perms)
+    }
+    permissionsDraft = draft
+  }
+
   async function refreshAll() {
     await refreshSession()
     if (!session.authenticated) return
@@ -215,6 +279,7 @@
     if (hasAny(['sync_view', 'sync_manage'])) tasks.push(runSafe(refreshSyncStatus, 'Failed to load sync status'))
     if (hasAny(['tracking_view', 'tracking_manage'])) tasks.push(runSafe(refreshTracking, 'Failed to load tracking data'))
     if (hasAny(['pilot_view', 'pilot_manage', 'pilot_chat'])) tasks.push(runSafe(refreshPilotState, 'Failed to load pilot state'))
+    if (hasPerm('admin')) tasks.push(runSafe(refreshPermissions, 'Failed to load access control data'))
     await Promise.all(tasks)
   }
 
@@ -345,6 +410,57 @@
     } catch (error) {
       const message = (error as Error)?.message ?? String(error)
       addAlert('error', 'Unable to clear tracking data: ' + message)
+    }
+  }
+
+  async function saveExistingPermissions(userId: string) {
+    const perms = permissionsDraft[userId] ?? []
+    try {
+      await apiFetch('/api/admin/permissions', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId, permissions: perms }),
+      })
+      addAlert('success', `Permissions updated for ${userId}`)
+      await refreshPermissions()
+    } catch (error) {
+      const message = (error as Error)?.message ?? String(error)
+      addAlert('error', 'Unable to update permissions: ' + message)
+    }
+  }
+
+  async function removePermissionsUser(userId: string) {
+    try {
+      await apiFetch(`/api/admin/permissions/${userId}`, { method: 'DELETE' })
+      addAlert('success', `Removed access for ${userId}`)
+      await refreshPermissions()
+    } catch (error) {
+      const message = (error as Error)?.message ?? String(error)
+      addAlert('error', 'Unable to remove permissions: ' + message)
+    }
+  }
+
+  async function addPermissionsUser() {
+    const userId = newUserId.trim()
+    if (!userId) {
+      addAlert('error', 'User ID is required')
+      return
+    }
+    if (newUserPerms.length === 0) {
+      addAlert('error', 'Select at least one permission')
+      return
+    }
+    try {
+      await apiFetch('/api/admin/permissions', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId, permissions: newUserPerms }),
+      })
+      addAlert('success', `Added permissions for ${userId}`)
+      newUserId = ''
+      newUserPerms = []
+      await refreshPermissions()
+    } catch (error) {
+      const message = (error as Error)?.message ?? String(error)
+      addAlert('error', 'Unable to add user: ' + message)
     }
   }
 
@@ -777,6 +893,96 @@
                         <p class="text-white/40">No sessions recorded yet.</p>
                       {/if}
                     </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          {/if}
+          {#if activeTab === 'access'}
+            <section class="space-y-6">
+              <div class={cardClass}>
+                <h3 class="text-lg font-semibold text-white/90">Access Control</h3>
+                <p class="text-sm text-white/50 mb-4">
+                  Grant dashboard access to Discord IDs and choose the scopes they can use. Admins automatically inherit every permission.
+                </p>
+
+                {#if permissionsData.length === 0}
+                  <p class="text-white/50 text-sm border border-dashed border-white/10 rounded-2xl p-4">
+                    No additional users have been granted access yet.
+                  </p>
+                {:else}
+                  <div class="space-y-4">
+                    {#each permissionsData as entry (entry.id)}
+                      <div class="border border-white/10 rounded-2xl p-5 bg-white/5">
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                          <div>
+                            <p class="text-white/80 font-semibold text-sm">Discord ID</p>
+                            <p class="text-white/90 text-base font-medium">{entry.id}</p>
+                            <p class="text-xs text-white/40 mt-1">
+                              Current: {permissionsDraft[entry.id]?.length ? permissionsDraft[entry.id].join(', ') : 'No permissions'}
+                            </p>
+                          </div>
+                          <div class="flex gap-2 flex-wrap">
+                            <button
+                              class="px-4 py-2 rounded-xl border border-emerald-400/40 bg-emerald-400/10 text-emerald-100 hover:bg-emerald-400/20 transition"
+                              on:click={() => saveExistingPermissions(entry.id)}
+                            >
+                              Save Changes
+                            </button>
+                            <button
+                              class="px-4 py-2 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20 transition"
+                              on:click={() => removePermissionsUser(entry.id)}
+                            >
+                              Remove Access
+                            </button>
+                          </div>
+                        </div>
+                        <div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {#each availablePermissions as perm}
+                            <label class="flex items-center gap-2 text-sm text-white/70 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                              <input
+                                type="checkbox"
+                                class="accent-accent"
+                                checked={permissionsDraft[entry.id]?.includes(perm)}
+                                on:change={(event) => toggleExistingPermission(entry.id, perm, (event.currentTarget as HTMLInputElement).checked)}
+                              />
+                              <span>{perm}</span>
+                            </label>
+                          {/each}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="mt-8 pt-6 border-t border-white/10">
+                  <h4 class="text-white/80 font-semibold">Grant Access</h4>
+                  <p class="text-xs text-white/40 mb-4">Enter a Discord user ID and choose at least one scope to grant dashboard access.</p>
+                  <div class="flex flex-col sm:flex-row gap-3">
+                    <input
+                      class="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white"
+                      placeholder="Discord user ID"
+                      bind:value={newUserId}
+                    />
+                    <button
+                      class="px-4 py-2 rounded-xl border border-accent/40 bg-accent/20 text-accent hover:bg-accent/30 transition"
+                      on:click={addPermissionsUser}
+                    >
+                      Add / Update User
+                    </button>
+                  </div>
+                  <div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {#each availablePermissions as perm}
+                      <label class="flex items-center gap-2 text-sm text-white/70 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                        <input
+                          type="checkbox"
+                          class="accent-accent"
+                          checked={newUserPerms.includes(perm)}
+                          on:change={(event) => toggleNewUserPermission(perm, (event.currentTarget as HTMLInputElement).checked)}
+                        />
+                        <span>{perm}</span>
+                      </label>
+                    {/each}
                   </div>
                 </div>
               </div>

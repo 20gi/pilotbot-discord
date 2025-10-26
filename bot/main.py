@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 import asyncio
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterable, List
 import yaml
 from pilot_chat import setup_pilot_chat
 import ssl
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # --- Configuration loading -------------------------------------------------
 DEFAULT_CONFIG_FILE = os.getenv('BOT_CONFIG_FILE')
 DEFAULT_DATA_DIR = Path(os.getenv('DATA_DIR', 'data'))
+ALLOWED_USERS_FILE = DEFAULT_DATA_DIR / 'web_allowed_users.json'
 
 
 def _load_yaml_options(path: Path) -> dict:
@@ -334,6 +335,109 @@ def save_tracking_data(data):
             json.dump(data, f, indent=2)
     except Exception as e:
         logger.error("Error saving tracking data: %s", e)
+
+
+# --- Web Allowed Users Store -----------------------------------------------
+WEB_ALLOWED_USERS: Dict[str, List[str]] = {}
+
+
+def _normalize_permission_list(perms: Iterable[str] | None) -> List[str]:
+    if not perms:
+        return []
+    sanitized = []
+    for perm in perms:
+        if perm is None:
+            continue
+        text = str(perm).strip()
+        if text:
+            sanitized.append(text)
+    return sorted(set(sanitized))
+
+
+def _sanitize_allowed_users(data: Dict[str, Iterable[str]] | None) -> Dict[str, List[str]]:
+    if not data:
+        return {}
+    cleaned: Dict[str, List[str]] = {}
+    for key, value in data.items():
+        perms: Iterable[str] | None
+        if isinstance(value, (list, tuple, set)):
+            perms = value  # type: ignore[assignment]
+        elif isinstance(value, str):
+            perms = [part.strip() for part in value.split('|')]
+        else:
+            continue
+        normalized = _normalize_permission_list(perms)
+        if normalized:
+            cleaned[str(key)] = normalized
+    return cleaned
+
+
+def save_allowed_users_data(data: Dict[str, Iterable[str]]) -> None:
+    payload = _sanitize_allowed_users(data)
+    try:
+        ALLOWED_USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with ALLOWED_USERS_FILE.open('w', encoding='utf-8') as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+    except Exception as exc:
+        logger.error("Failed to save web allowed users to %s: %s", ALLOWED_USERS_FILE, exc)
+
+
+def load_allowed_users_data(defaults: Dict[str, Iterable[str]] | None = None) -> Dict[str, List[str]]:
+    global WEB_ALLOWED_USERS
+    sanitized_defaults = _sanitize_allowed_users(defaults)
+    data: Dict[str, List[str]] = {}
+    try:
+        with ALLOWED_USERS_FILE.open('r', encoding='utf-8') as handle:
+            raw = json.load(handle)
+        if isinstance(raw, dict):
+            data = _sanitize_allowed_users({str(k): v for k, v in raw.items()})
+        else:
+            logger.warning("Web allowed users store contained non-dict data; resetting with defaults")
+            data = sanitized_defaults
+    except FileNotFoundError:
+        data = sanitized_defaults
+        if sanitized_defaults:
+            save_allowed_users_data(sanitized_defaults)
+    except json.JSONDecodeError as exc:
+        logger.warning("Failed to parse %s (%s); resetting with defaults", ALLOWED_USERS_FILE, exc)
+        data = sanitized_defaults
+        save_allowed_users_data(sanitized_defaults)
+    except Exception as exc:
+        logger.warning("Error loading web allowed users from %s: %s", ALLOWED_USERS_FILE, exc)
+        data = sanitized_defaults
+        if sanitized_defaults:
+            save_allowed_users_data(sanitized_defaults)
+
+    WEB_ALLOWED_USERS = data
+    return data
+
+
+def get_allowed_users_map() -> Dict[str, List[str]]:
+    return dict(WEB_ALLOWED_USERS)
+
+
+def set_allowed_user_permissions(user_id: str, perms: Iterable[str]) -> List[str]:
+    global WEB_ALLOWED_USERS
+    uid = str(user_id).strip()
+    if not uid:
+        raise ValueError("user_id is required")
+    normalized = _normalize_permission_list(perms)
+    if not normalized:
+        WEB_ALLOWED_USERS.pop(uid, None)
+    else:
+        WEB_ALLOWED_USERS[uid] = normalized
+    save_allowed_users_data(WEB_ALLOWED_USERS)
+    return WEB_ALLOWED_USERS.get(uid, [])
+
+
+def delete_allowed_user(user_id: str) -> bool:
+    global WEB_ALLOWED_USERS
+    uid = str(user_id).strip()
+    if not uid:
+        return False
+    removed = WEB_ALLOWED_USERS.pop(uid, None) is not None
+    save_allowed_users_data(WEB_ALLOWED_USERS)
+    return removed
 
 
 ENTRY_REGEX = re.compile(
@@ -684,31 +788,32 @@ async def on_ready():
     session_secret = options.get('web_session_secret')
 
     # Allowed users and permissions
-    allowed_users = {}
+    allowed_users_defaults: Dict[str, List[str]] = {}
     raw_allowed = options.get('web_allowed_users')
     # Support multiple formats: dict mapping, list of {id, perms}, or CSV string "id:perm|perm,id2:view"
     try:
         if isinstance(raw_allowed, dict):
             for k, v in raw_allowed.items():
-                if isinstance(v, (list, tuple)):
-                    allowed_users[str(k)] = list(v)
+                if isinstance(v, (list, tuple, set)):
+                    allowed_users_defaults[str(k)] = [p.strip() for p in v if str(p).strip()]
         elif isinstance(raw_allowed, list):
             for item in raw_allowed:
                 if isinstance(item, dict) and 'id' in item and 'perms' in item:
                     perms = item['perms'] if isinstance(item['perms'], list) else str(item['perms']).split('|')
-                    allowed_users[str(item['id'])] = [p.strip() for p in perms if p.strip()]
+                    allowed_users_defaults[str(item['id'])] = [p.strip() for p in perms if p.strip()]
         elif isinstance(raw_allowed, str):
             # id:perm|perm,id2:view
             for part in raw_allowed.split(','):
                 part = part.strip()
-                if not part:
-                    continue
-                if ':' not in part:
+                if not part or ':' not in part:
                     continue
                 uid, perms = part.split(':', 1)
-                allowed_users[str(uid.strip())] = [p.strip() for p in perms.split('|') if p.strip()]
+                allowed_users_defaults[str(uid.strip())] = [p.strip() for p in perms.split('|') if p.strip()]
     except Exception as e:
         logger.warning("Failed to parse web_allowed_users: %s", e)
+
+    allowed_users = load_allowed_users_data(allowed_users_defaults)
+    logger.info("Loaded %d web allowed user entries", len(allowed_users))
 
     ssl_context = None
     if cert_path and key_path and os.path.exists(str(cert_path)) and os.path.exists(str(key_path)):
