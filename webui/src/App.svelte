@@ -712,7 +712,7 @@
     {:else if !session.authenticated}
       <div class={panelClass + ' text-center space-y-4 text-white/70'}>
         <h2 class="text-2xl font-semibold text-white/90">Authentication required</h2>
-        <p>Sign in with Discord to access the control deck.</p>
+        <p>Sign in with Discord to access the cockpit.</p>
         <a
           class="inline-flex items-center justify-center px-5 py-3 rounded-2xl border border-accent/40 bg-accent/20 text-accent hover:bg-accent/30 transition"
           href={loginUrl}
