@@ -7,39 +7,182 @@ import os
 import json
 from datetime import datetime, timezone
 import asyncio
+from pathlib import Path
 import yaml
 from pilot_chat import setup_pilot_chat
 import ssl
 from web_api import start_web_server, DEFAULT_WEB_PORT
 
-# silly messages version
-# Bot setup
+logger = logging.getLogger(__name__)
+
+# --- Configuration loading -------------------------------------------------
+DEFAULT_CONFIG_FILE = os.getenv('BOT_CONFIG_FILE')
+DEFAULT_DATA_DIR = Path(os.getenv('DATA_DIR', 'data'))
+
+
+def _load_yaml_options(path: Path) -> dict:
+    try:
+        if not path or not path.exists():
+            return {}
+        with path.open('r', encoding='utf-8') as handle:
+            data = yaml.safe_load(handle) or {}
+            if isinstance(data, dict):
+                if 'options' in data and isinstance(data['options'], dict):
+                    return data['options']
+                return data
+            return {}
+    except Exception as exc:
+        logger.warning("Failed to load configuration file %s: %s", path, exc)
+        return {}
+
+
+def _parse_bool(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on', 'y'}
+
+
+def _parse_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_secret_file(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        data = Path(path).read_text(encoding='utf-8').strip()
+        return data or None
+    except Exception as exc:
+        logger.warning("Failed to read secret file %s: %s", path, exc)
+        return None
+
+
+def load_settings() -> dict:
+    config: dict = {}
+
+    if DEFAULT_CONFIG_FILE:
+        config.update(_load_yaml_options(Path(DEFAULT_CONFIG_FILE)))
+    else:
+        fallback = Path('config.yaml')
+        if fallback.exists():
+            config.update(_load_yaml_options(fallback))
+
+    # Environment variable overrides
+    env_overrides = {
+        'bot_token': os.getenv('BOT_TOKEN'),
+        'chutes_api_key': os.getenv('CHUTES_API_KEY'),
+        'chutes_model': os.getenv('CHUTES_MODEL'),
+        'pilot_history_limit': _parse_int(os.getenv('PILOT_HISTORY_LIMIT')),
+        'pilot_response_channel_id': os.getenv('PILOT_RESPONSE_CHANNEL_ID'),
+        'pilot_enabled': _parse_bool(os.getenv('PILOT_ENABLED')),
+        'pilot_style_mode': os.getenv('PILOT_STYLE_MODE'),
+        'web_port': _parse_int(os.getenv('WEB_PORT')),
+        'web_ssl_cert_path': os.getenv('WEB_SSL_CERT_PATH'),
+        'web_ssl_key_path': os.getenv('WEB_SSL_KEY_PATH'),
+        'web_auth_token': os.getenv('WEB_AUTH_TOKEN'),
+        'web_oauth_client_id': os.getenv('WEB_OAUTH_CLIENT_ID'),
+        'web_oauth_client_secret': os.getenv('WEB_OAUTH_CLIENT_SECRET'),
+        'web_oauth_redirect_uri': os.getenv('WEB_OAUTH_REDIRECT_URI'),
+        'web_session_secret': os.getenv('WEB_SESSION_SECRET'),
+        'web_allowed_users': os.getenv('WEB_ALLOWED_USERS'),
+        'control_server_id': _parse_int(os.getenv('CONTROL_SERVER_ID')),
+        'control_channel_id': _parse_int(os.getenv('CONTROL_CHANNEL_ID')),
+        'monitoring_channel_id': _parse_int(os.getenv('MONITORING_CHANNEL_ID')),
+        'tracking_data_path': os.getenv('TRACKING_DATA_PATH'),
+    }
+
+    for key, value in env_overrides.items():
+        if value is not None:
+            config[key] = value
+
+    secret_files = {
+        'bot_token': os.getenv('BOT_TOKEN_FILE'),
+        'chutes_api_key': os.getenv('CHUTES_API_KEY_FILE'),
+        'web_auth_token': os.getenv('WEB_AUTH_TOKEN_FILE'),
+        'web_oauth_client_secret': os.getenv('WEB_OAUTH_CLIENT_SECRET_FILE'),
+        'web_session_secret': os.getenv('WEB_SESSION_SECRET_FILE'),
+    }
+
+    for key, file_path in secret_files.items():
+        secret = _read_secret_file(file_path)
+        if secret is not None:
+            config[key] = secret
+
+    # Ensure numeric / boolean coercion after potential overrides
+    if 'pilot_enabled' in config:
+        config['pilot_enabled'] = bool(_parse_bool(config['pilot_enabled']))
+    if 'pilot_history_limit' in config:
+        parsed = _parse_int(config['pilot_history_limit'])
+        if parsed is not None:
+            config['pilot_history_limit'] = parsed
+    if 'web_port' in config:
+        parsed = _parse_int(config['web_port'])
+        if parsed is not None:
+            config['web_port'] = parsed
+    for key in ('control_server_id', 'control_channel_id', 'monitoring_channel_id'):
+        if key in config:
+            parsed = _parse_int(config[key])
+            if parsed is not None:
+                config[key] = parsed
+
+    return config
+
+
+OPTIONS = load_settings()
+OPTIONS.setdefault('pilot_history_limit', 300)
+OPTIONS.setdefault('pilot_enabled', False)
+OPTIONS.setdefault('pilot_style_mode', 'default')
+OPTIONS.setdefault('chutes_model', 'deepseek-ai/DeepSeek-V3-0324')
+
+DATA_DIR = DEFAULT_DATA_DIR
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+TRACKING_DATA_PATH = Path(
+    OPTIONS.get('tracking_data_path')
+    or os.getenv('TRACKING_DATA_PATH', DATA_DIR / 'lillian_tracking.json')
+)
+TRACKING_DATA_PATH = Path(TRACKING_DATA_PATH)
+TRACKING_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+# --- Discord bot setup -----------------------------------------------------
 intents = discord.Intents.default()
 intents.members = True  # Required for member join/leave events
 intents.presences = True  # Required for tracking owner's presence
 intents.message_content = True  # Required for reading messages to build history
 bot = commands.Bot(command_prefix='!', intents=intents)
-CONFIG_PATH = '/data/options.json'
-TRACKING_DATA_PATH = '/data/lillian_tracking.json'
 
 # --- Pilot Chat Cog holder ---
 PILOT_COG = None
 
+
+def _int_with_default(key: str, default: int) -> int:
+    value = _parse_int(OPTIONS.get(key)) if key in OPTIONS else None
+    return value if value is not None else default
+
+
 # --- Control Server and Channel IDs ---
-CONTROL_SERVER_ID = 1258526802599481375
-CONTROL_CHANNEL_ID = 1311918837528002600
-MONITORING_CHANNEL_ID = 1399788089307566111
+CONTROL_SERVER_ID = _int_with_default('control_server_id', 1258526802599481375)
+CONTROL_CHANNEL_ID = _int_with_default('control_channel_id', 1311918837528002600)
+MONITORING_CHANNEL_ID = _int_with_default('monitoring_channel_id', 1399788089307566111)
 CONTROL_GUILD = discord.Object(id=CONTROL_SERVER_ID)
 # ------------------------------------
 
 # Command Tree for slash commands
 tree = bot.tree
 
-print("updated!!")
+log_level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level = getattr(logging, log_level_name, logging.INFO)
 
-# Configure basic logging if not already configured (HA addons often have none)
+# Configure basic logging if not already configured
 if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+    logging.basicConfig(level=log_level, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+else:
+    logging.getLogger().setLevel(log_level)
 
 # --- Owner Status Tracking Variables ---
 owner_status_sync_enabled = False
@@ -60,7 +203,7 @@ class WrongChannelError(app_commands.CheckFailure):
 def load_tracking_data():
     """Load tracking data from JSON file"""
     try:
-        with open(TRACKING_DATA_PATH, 'r') as f:
+        with TRACKING_DATA_PATH.open('r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
         # Initialize with default structure
@@ -72,16 +215,16 @@ def load_tracking_data():
         save_tracking_data(default_data)
         return default_data
     except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from {TRACKING_DATA_PATH}")
+        logger.error("Could not decode JSON from %s", TRACKING_DATA_PATH)
         return {"tracked_user_id": None, "current_session": None, "leaderboard": []}
 
 def save_tracking_data(data):
     """Save tracking data to JSON file"""
     try:
-        with open(TRACKING_DATA_PATH, 'w') as f:
+        with TRACKING_DATA_PATH.open('w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
     except Exception as e:
-        print(f"Error saving tracking data: {e}")
+        logger.error("Error saving tracking data: %s", e)
 
 def format_duration(start_time, end_time):
     """Calculate and format duration between two timestamps"""
@@ -110,9 +253,9 @@ async def send_monitoring_message(message=None, embed=None):
             elif message:
                 await channel.send(message)
         else:
-            print(f"Monitoring channel {MONITORING_CHANNEL_ID} not found")
+            logger.warning("Monitoring channel %s not found", MONITORING_CHANNEL_ID)
     except Exception as e:
-        print(f"Error sending monitoring message: {e}")
+        logger.error("Error sending monitoring message: %s", e)
 
 # --- Owner Presence Tracking ---
 @bot.event
@@ -126,7 +269,7 @@ async def on_presence_update(before, after):
     
     # Check if owner went offline
     if before.status != discord.Status.offline and after.status == discord.Status.offline:
-        print(f"Owner went offline, setting bot to invisible")
+        logger.info("Owner went offline, setting bot to invisible")
         # Store current activity before going offline
         if bot.user:
             guild = bot.get_guild(CONTROL_SERVER_ID)
@@ -138,7 +281,7 @@ async def on_presence_update(before, after):
         
     # Check if owner came back online
     elif before.status == discord.Status.offline and after.status != discord.Status.offline:
-        print(f"Owner came online, setting bot back to online")
+        logger.info("Owner came online, setting bot back to online")
         # Restore original activity or set default
         activity = bot_original_activity or discord.Activity(type=discord.ActivityType.watching, name="i hate dusekkar")
         await bot.change_presence(status=discord.Status.online, activity=activity)
@@ -260,11 +403,11 @@ async def update_bot_bio(bio_text):
     async with aiohttp.ClientSession() as session:
         async with session.patch(url, json=data, headers=headers) as response:
             if response.status == 200:
-                print(f"Successfully updated bot bio to: {bio_text}")
+                logger.info("Updated bot bio")
             else:
-                print(f"Failed to update bio: {response.status}")
+                logger.error("Failed to update bio: %s", response.status)
                 error_text = await response.text()
-                print(f"Error: {error_text}")
+                logger.error("Discord API response: %s", error_text)
 
 # Custom check that raises specific errors for different failures
 def is_owner_and_in_control_channel():
@@ -287,36 +430,14 @@ def is_owner_and_in_control_channel():
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user} has connected to Discord!')
-    
+    logger.info("%s has connected to Discord", bot.user)
+
     app_info = await bot.application_info()
     bot.owner_id = app_info.owner.id
-    print(f"Owner ID set to: {bot.owner_id}")
+    logger.info("Owner ID set to: %s", bot.owner_id)
 
-    # Setup Pilot Chat cog using Home Assistant options first, fallback to config.yaml
-    def _load_options():
-        # Primary: Home Assistant passes options to /data/options.json
-        try:
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                data = json.load(f) or {}
-            return data
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            print(f"Failed to load {CONFIG_PATH}: {e}")
+    options = OPTIONS.copy()
 
-        # Fallback: local dev via config.yaml
-        try:
-            with open('config.yaml', 'r', encoding='utf-8') as f:
-                y = yaml.safe_load(f) or {}
-            return y.get('options', {})
-        except FileNotFoundError:
-            return {}
-        except Exception as e:
-            print(f"Failed to load config.yaml: {e}")
-            return {}
-
-    options = _load_options()
     # Parse channel id safely from string to avoid precision loss
     raw_channel = options.get('pilot_response_channel_id')
     parsed_channel = None
@@ -324,13 +445,13 @@ async def on_ready():
         try:
             parsed_channel = int(str(raw_channel))
         except Exception as e:
-            print(f"Invalid pilot_response_channel_id '{raw_channel}': {e}")
+            logger.warning("Invalid pilot_response_channel_id '%s': %s", raw_channel, e)
 
     pilot_config = {
         'pilot_enabled': bool(options.get('pilot_enabled', False)),
         'pilot_history_limit': int(options.get('pilot_history_limit', 300)),
         'chutes_model': options.get('chutes_model', 'deepseek-ai/DeepSeek-V3-0324'),
-        'chutes_api_key': options.get('chutes_api_key') or os.getenv('CHUTES_API_KEY'),
+        'chutes_api_key': options.get('chutes_api_key'),
         'pilot_response_channel_id': parsed_channel,
         'pilot_style_mode': options.get('pilot_style_mode', 'default'),
     }
@@ -347,11 +468,14 @@ async def on_ready():
     key_to_show = pilot_config.get('chutes_api_key')
     if key_to_show:
         if full_key:
-            print(f"Chutes API key: {key_to_show}")
+            logger.info("Chutes API key: %s", key_to_show)
         else:
-            print(f"Chutes API key (masked): {_mask_key(key_to_show)} — set CHUTES_PRINT_FULL_KEY=1 to show full key")
+            logger.info(
+                "Chutes API key (masked): %s — set CHUTES_PRINT_FULL_KEY=1 to show full key",
+                _mask_key(key_to_show),
+            )
     else:
-        print("Chutes API key not set")
+        logger.info("Chutes API key not set")
 
     global PILOT_COG
     if PILOT_COG is None:
@@ -369,13 +493,13 @@ async def on_ready():
         PILOT_COG.set_owner_username(str(app_info.owner.id))
 
     await tree.sync(guild=CONTROL_GUILD)
-    print(f"Synced slash commands for guild: {CONTROL_SERVER_ID}")
+    logger.info("Synced slash commands for guild: %s", CONTROL_SERVER_ID)
 
     await bot.change_presence(
         status=discord.Status.online,
         activity=discord.Activity(type=discord.ActivityType.watching, name="i hate dusekkar")
     )
-    print("Status set to: Watching i hate dusekkar")
+    logger.info("Status set to: Watching i hate dusekkar")
 
     # --- Start Web API server (HTTPS if certs provided) ---
     web_port = options.get('web_port', DEFAULT_WEB_PORT)
@@ -384,19 +508,19 @@ async def on_ready():
     except Exception:
         web_port = DEFAULT_WEB_PORT
 
-    cert_path = options.get('web_ssl_cert_path') or os.getenv('WEB_SSL_CERT_PATH')
-    key_path = options.get('web_ssl_key_path') or os.getenv('WEB_SSL_KEY_PATH')
-    auth_token = options.get('web_auth_token') or os.getenv('WEB_AUTH_TOKEN') or ""
+    cert_path = options.get('web_ssl_cert_path')
+    key_path = options.get('web_ssl_key_path')
+    auth_token = options.get('web_auth_token') or ""
 
     # Discord OAuth config for Web UI
-    oauth_client_id = options.get('web_oauth_client_id') or os.getenv('WEB_OAUTH_CLIENT_ID')
-    oauth_client_secret = options.get('web_oauth_client_secret') or os.getenv('WEB_OAUTH_CLIENT_SECRET')
-    oauth_redirect_uri = options.get('web_oauth_redirect_uri') or os.getenv('WEB_OAUTH_REDIRECT_URI')
-    session_secret = options.get('web_session_secret') or os.getenv('WEB_SESSION_SECRET')
+    oauth_client_id = options.get('web_oauth_client_id')
+    oauth_client_secret = options.get('web_oauth_client_secret')
+    oauth_redirect_uri = options.get('web_oauth_redirect_uri')
+    session_secret = options.get('web_session_secret')
 
     # Allowed users and permissions
     allowed_users = {}
-    raw_allowed = options.get('web_allowed_users') or os.getenv('WEB_ALLOWED_USERS')
+    raw_allowed = options.get('web_allowed_users')
     # Support multiple formats: dict mapping, list of {id, perms}, or CSV string "id:perm|perm,id2:view"
     try:
         if isinstance(raw_allowed, dict):
@@ -419,19 +543,19 @@ async def on_ready():
                 uid, perms = part.split(':', 1)
                 allowed_users[str(uid.strip())] = [p.strip() for p in perms.split('|') if p.strip()]
     except Exception as e:
-        print(f"Failed to parse web_allowed_users: {e}")
+        logger.warning("Failed to parse web_allowed_users: %s", e)
 
     ssl_context = None
     if cert_path and key_path and os.path.exists(str(cert_path)) and os.path.exists(str(key_path)):
         try:
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ssl_context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
-            print(f"Configured HTTPS with cert={cert_path} key={key_path}")
+            logger.info("Configured HTTPS with cert=%s key=%s", cert_path, key_path)
         except Exception as e:
-            print(f"Failed to configure SSL, falling back to HTTP: {e}")
+            logger.warning("Failed to configure SSL, falling back to HTTP: %s", e)
             ssl_context = None
     else:
-        print("SSL cert/key not provided or not found; starting Web API over HTTP")
+        logger.info("SSL cert/key not provided or not found; starting Web API over HTTP")
 
     if not getattr(bot, '_web_server_started', False):
         logging.info(
@@ -456,8 +580,6 @@ async def on_ready():
             )
         except Exception as e:
             logging.exception("Web API failed to start on port %s: %s", web_port, e)
-            # Surface the failure prominently in HA logs
-            print(f"Web API failed to start on port {web_port}: {e}")
         else:
             setattr(bot, '_web_server_started', True)
 
@@ -686,27 +808,19 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.response.send_message('an error occurred', ephemeral=True)
         raise error
 
-def get_token_from_config():
-    """Reads the bot token from the Home Assistant options.json file."""
-    try:
-        with open(CONFIG_PATH, 'r') as f:
-            config = json.load(f)
-        token = config.get('bot_token')
-        if not token:
-            print("Error: 'bot_token' not found in the configuration file.")
-            return None
-        return token
-    except FileNotFoundError:
-        print(f"Error: Configuration file not found at {CONFIG_PATH}")
+def resolve_bot_token():
+    """Resolve the Discord bot token from environment variables or configuration."""
+    token = os.getenv('BOT_TOKEN') or OPTIONS.get('bot_token')
+    if not token:
+        logger.error("BOT_TOKEN is not set. Provide it via environment variable or configuration file.")
         return None
-    except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from {CONFIG_PATH}")
-        return None
+    return token
+
 
 # Get the token and run the bot
-BOT_TOKEN = get_token_from_config()
+BOT_TOKEN = resolve_bot_token()
 
 if BOT_TOKEN:
     bot.run(BOT_TOKEN)
 else:
-    print("Bot could not be started due to a token configuration error.")
+    logger.error("Bot could not be started due to a token configuration error.")

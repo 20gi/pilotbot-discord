@@ -1,0 +1,14 @@
+services:
+  pilotbot:
+    build: .
+    container_name: pilotbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/run/secrets:ro
+    ports:
+      - "8443:8443"

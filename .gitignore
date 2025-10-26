@@ -1,4 +1,9 @@
 .env
 .venv/
-pilot_discord_bot/webui/node_modules/
-pilot_discord_bot/webui/dist/
+webui/node_modules/
+webui/dist/
+data/
+!data/.gitkeep
+secrets/
+!secrets/.gitkeep
+bot/__pycache__
