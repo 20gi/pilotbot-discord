@@ -53,6 +53,14 @@ def _parse_int(value):
         return None
 
 
+def _clean_env(value):
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() == '':
+        return None
+    return value
+
+
 def _read_secret_file(path: str | None) -> str | None:
     if not path:
         return None
@@ -76,26 +84,26 @@ def load_settings() -> dict:
 
     # Environment variable overrides
     env_overrides = {
-        'bot_token': os.getenv('BOT_TOKEN'),
-        'chutes_api_key': os.getenv('CHUTES_API_KEY'),
-        'chutes_model': os.getenv('CHUTES_MODEL'),
+        'bot_token': _clean_env(os.getenv('BOT_TOKEN')),
+        'chutes_api_key': _clean_env(os.getenv('CHUTES_API_KEY')),
+        'chutes_model': _clean_env(os.getenv('CHUTES_MODEL')),
         'pilot_history_limit': _parse_int(os.getenv('PILOT_HISTORY_LIMIT')),
-        'pilot_response_channel_id': os.getenv('PILOT_RESPONSE_CHANNEL_ID'),
+        'pilot_response_channel_id': _clean_env(os.getenv('PILOT_RESPONSE_CHANNEL_ID')),
         'pilot_enabled': _parse_bool(os.getenv('PILOT_ENABLED')),
-        'pilot_style_mode': os.getenv('PILOT_STYLE_MODE'),
+        'pilot_style_mode': _clean_env(os.getenv('PILOT_STYLE_MODE')),
         'web_port': _parse_int(os.getenv('WEB_PORT')),
-        'web_ssl_cert_path': os.getenv('WEB_SSL_CERT_PATH'),
-        'web_ssl_key_path': os.getenv('WEB_SSL_KEY_PATH'),
-        'web_auth_token': os.getenv('WEB_AUTH_TOKEN'),
-        'web_oauth_client_id': os.getenv('WEB_OAUTH_CLIENT_ID'),
-        'web_oauth_client_secret': os.getenv('WEB_OAUTH_CLIENT_SECRET'),
-        'web_oauth_redirect_uri': os.getenv('WEB_OAUTH_REDIRECT_URI'),
-        'web_session_secret': os.getenv('WEB_SESSION_SECRET'),
-        'web_allowed_users': os.getenv('WEB_ALLOWED_USERS'),
+        'web_ssl_cert_path': _clean_env(os.getenv('WEB_SSL_CERT_PATH')),
+        'web_ssl_key_path': _clean_env(os.getenv('WEB_SSL_KEY_PATH')),
+        'web_auth_token': _clean_env(os.getenv('WEB_AUTH_TOKEN')),
+        'web_oauth_client_id': _clean_env(os.getenv('WEB_OAUTH_CLIENT_ID')),
+        'web_oauth_client_secret': _clean_env(os.getenv('WEB_OAUTH_CLIENT_SECRET')),
+        'web_oauth_redirect_uri': _clean_env(os.getenv('WEB_OAUTH_REDIRECT_URI')),
+        'web_session_secret': _clean_env(os.getenv('WEB_SESSION_SECRET')),
+        'web_allowed_users': _clean_env(os.getenv('WEB_ALLOWED_USERS')),
         'control_server_id': _parse_int(os.getenv('CONTROL_SERVER_ID')),
         'control_channel_id': _parse_int(os.getenv('CONTROL_CHANNEL_ID')),
         'monitoring_channel_id': _parse_int(os.getenv('MONITORING_CHANNEL_ID')),
-        'tracking_data_path': os.getenv('TRACKING_DATA_PATH'),
+        'tracking_data_path': _clean_env(os.getenv('TRACKING_DATA_PATH')),
     }
 
     for key, value in env_overrides.items():
@@ -899,16 +907,31 @@ async def import_lillian(interaction: discord.Interaction, user_id: str, data_fi
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, NotOwnerError):
         # Custom message for non-owners
-        await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=False)
+        try:
+            await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=False)
+        except discord.InteractionResponded:
+            await interaction.followup.send('ew who are you you cant tell me what to do', ephemeral=False)
+        return
     elif isinstance(error, WrongChannelError):
         # Custom message for using the command in the wrong channel
-        await interaction.response.send_message('this command cant be used here', ephemeral=True)
+        try:
+            await interaction.response.send_message('this command cant be used here', ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send('this command cant be used here', ephemeral=True)
+        return
     elif isinstance(error, app_commands.CheckFailure):
         # Fallback for any other permission-related errors
-        await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=True)
+        try:
+            await interaction.response.send_message('ew who are you you cant tell me what to do', ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send('ew who are you you cant tell me what to do', ephemeral=True)
+        return
     else:
         # Generic error for other issues
-        await interaction.response.send_message('an error occurred', ephemeral=True)
+        try:
+            await interaction.response.send_message('an error occurred', ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send('an error occurred', ephemeral=True)
         raise error
 
 def resolve_bot_token():
