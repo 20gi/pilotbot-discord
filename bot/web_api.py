@@ -770,6 +770,30 @@ async def start_web_server(
         len(allowed_users or {}),
     )
 
+    # Verbose guidance when OAuth is not fully configured
+    scheme_hint = "https" if ssl_context else "http"
+    effective_session_secret = session_secret or os.getenv("WEB_SESSION_SECRET")
+    missing: list[str] = []
+    if not oauth_client_id:
+        missing.append("WEB_OAUTH_CLIENT_ID")
+    if not oauth_client_secret:
+        missing.append("WEB_OAUTH_CLIENT_SECRET")
+    if not oauth_redirect_uri:
+        missing.append("WEB_OAUTH_REDIRECT_URI")
+    if not effective_session_secret:
+        missing.append("WEB_SESSION_SECRET")
+
+    if missing:
+        logger.warning(
+            "OAuth not configured; missing %s. The /login route will be disabled.",
+            ", ".join(missing),
+        )
+        logger.info(
+            "To enable dashboard login, set the missing env vars and use redirect URI like: %s://<your-host>:%s/oauth/callback",
+            scheme_hint,
+            port,
+        )
+
     server = WebAPIServer(
         bot,
         auth_token=auth_token,
