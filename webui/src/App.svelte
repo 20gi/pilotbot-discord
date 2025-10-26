@@ -706,10 +706,8 @@
     {:else if !session.authenticated}
       <section class="login-panel">
         <div class="login-card">
+          <span class="login-icon">👨‍✈️</span>
           <h1 class="login-title">Pilot's Cockpit</h1>
-              <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl glass-chip border shadow-lg">
-                👨‍✈️
-              </span>
           <a class="login-button" href={loginUrl}>Login with Discord</a>
         </div>
       </section>
