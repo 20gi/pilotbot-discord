@@ -337,6 +337,7 @@ class WebAPIServer:
         self.app.router.add_get("/api/session", self.handle_session)
         self.app.router.add_get("/api/csrf", self.handle_csrf_token)
         self.app.router.add_get("/api/status", self.handle_status)
+        self.app.router.add_get("/api/theme", self.handle_theme_get)
         self.app.router.add_post("/api/message", self.handle_send_message)
         self.app.router.add_post("/api/set_status", self.handle_set_status)
         self.app.router.add_post("/api/set_online", self.handle_set_online_status)
@@ -358,6 +359,7 @@ class WebAPIServer:
         self.app.router.add_get("/api/admin/permissions", self.handle_admin_permissions_list)
         self.app.router.add_post("/api/admin/permissions", self.handle_admin_permissions_upsert)
         self.app.router.add_delete("/api/admin/permissions/{user_id}", self.handle_admin_permissions_delete)
+        self.app.router.add_post("/api/admin/theme", self.handle_theme_update)
 
         if self.ui_root.is_dir():
             assets_dir = self.ui_root / 'assets'
@@ -601,6 +603,21 @@ class WebAPIServer:
             },
         }
         return web.json_response(data)
+
+    async def handle_theme_get(self, request: web.Request) -> web.Response:
+        """Return the current theme configuration. Available without authentication."""
+        main_module = self._main()
+        get_fn = getattr(main_module, "get_theme_settings", None)
+        defaults = getattr(main_module, "DEFAULT_THEME_SETTINGS", {})
+        try:
+            theme = get_fn() if callable(get_fn) else {}
+        except Exception as exc:
+            logger.warning("Failed to load theme settings for response: %s", exc)
+            theme = {}
+        payload = theme if isinstance(theme, dict) else {}
+        if not payload and isinstance(defaults, dict):
+            payload = dict(defaults)
+        return web.json_response({"theme": payload})
 
     async def handle_send_message(self, request: web.Request) -> web.Response:
         user = request.get("user")
@@ -1092,6 +1109,43 @@ class WebAPIServer:
         except Exception:
             pass
         return web.json_response({"reply": reply})
+
+    async def handle_theme_update(self, request: web.Request) -> web.Response:
+        user = request.get("user")
+        if not user:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        uid, _ = user
+        if not self._has_perm(uid, "admin"):
+            return web.json_response({"error": "forbidden"}, status=403)
+
+        if not await self._verify_csrf(request):
+            return web.json_response({"error": "csrf_validation_failed"}, status=403)
+
+        payload = await self._payload(request)
+        if not isinstance(payload, dict):
+            payload = {}
+
+        main_module = self._main()
+        update_fn = getattr(main_module, "update_theme_settings", None)
+        if not callable(update_fn):
+            logger.error("update_theme_settings missing on main module")
+            return web.json_response({"error": "not_supported"}, status=500)
+
+        try:
+            updated = update_fn(payload)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except Exception:
+            logger.exception("Unexpected error updating theme settings")
+            return web.json_response({"error": "update_failed"}, status=500)
+
+        logger.info("User %s updated theme settings", uid)
+        try:
+            await self._log_to_discord(f"webui: <@{uid}> updated theme settings")
+        except Exception:
+            pass
+
+        return web.json_response({"ok": True, "theme": updated})
 
     async def handle_admin_permissions_list(self, request: web.Request) -> web.Response:
         user = request.get("user")

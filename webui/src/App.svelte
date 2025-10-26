@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import OverviewTab from './lib/components/OverviewTab.svelte'
   import PresenceTab from './lib/components/PresenceTab.svelte'
   import SyncTab from './lib/components/SyncTab.svelte'
@@ -7,6 +7,9 @@
   import AccessTab from './lib/components/AccessTab.svelte'
   import PilotTab from './lib/components/PilotTab.svelte'
   import PilotChatTab from './lib/components/PilotChatTab.svelte'
+  import CustomizationTab from './lib/components/CustomizationTab.svelte'
+  import { theme, defaultTheme, setThemeSettings } from './lib/stores/theme'
+  import type { ThemeSettings } from './lib/stores/theme'
 
   type AlertType = 'success' | 'error' | 'info'
 
@@ -33,6 +36,7 @@
     { id: 'tracking', label: 'Tracking', required: ['tracking_view', 'tracking_manage'] },
     { id: 'pilot', label: 'Pilot Config', required: ['pilot_view', 'pilot_manage'] },
     { id: 'pilot-chat', label: 'Pilot Chat', required: ['pilot_chat'] },
+    { id: 'customization', label: 'Customization', required: ['admin'] },
     { id: 'access', label: 'Access Control', required: ['admin'] },
   ] as const
 
@@ -57,9 +61,9 @@
   ]
 
   const panelClass =
-    'bg-surface-glass/80 border border-white/10 backdrop-blur-md shadow-glass rounded-3xl p-6 md:p-8'
+    'panel-surface bg-surface-glass/80 border border-white/10 backdrop-blur-md shadow-glass rounded-3xl p-6 md:p-8'
   const cardClass =
-    'bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-sm shadow-glass'
+    'panel-card bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-sm shadow-glass'
   const navActiveClass =
     'px-4 py-2 rounded-2xl border-accent bg-accent/20 text-white shadow-glass transition text-sm font-medium'
   const navInactiveClass =
@@ -85,6 +89,10 @@
   let permissionsData: { id: string; permissions: string[] }[] = []
   let permissionsDraft: Record<string, string[]> = {}
   let availablePermissions: string[] = []
+  let themeSettings: ThemeSettings = { ...defaultTheme }
+  const unsubscribeTheme = theme.subscribe((value) => {
+    themeSettings = value
+  })
   function hasPerm(perm: string): boolean {
     const perms = session.permissions ?? []
     return perms.includes('admin') || perms.includes(perm)
@@ -268,6 +276,56 @@
     }
   }
 
+  async function loadThemeSettings() {
+    try {
+      const response = await fetch('/api/theme', { credentials: 'include' })
+      if (!response.ok) {
+        throw new Error('failed_to_fetch_theme')
+      }
+      const data = await response.json().catch(() => ({}))
+      const payload = data?.theme
+      if (payload && typeof payload === 'object') {
+        setThemeSettings({ ...defaultTheme, ...(payload as Partial<ThemeSettings>) })
+      }
+    } catch (error) {
+      console.warn('Failed to load theme settings', error)
+    }
+  }
+
+  async function saveThemeSettings(themeInput: ThemeSettings): Promise<boolean> {
+    const payload: ThemeSettings = {
+      ...themeInput,
+      background_image: (themeInput.background_image ?? '').trim(),
+      background_color: themeInput.background_color,
+      accent_color: themeInput.accent_color,
+      accent_secondary_color: themeInput.accent_secondary_color,
+      accent_warning_color: themeInput.accent_warning_color,
+      accent_danger_color: themeInput.accent_danger_color,
+      text_color: themeInput.text_color,
+      background_blur: Math.round(Math.max(0, Math.min(64, Number(themeInput.background_blur) || 0))),
+      panel_blur: Math.round(Math.max(0, Math.min(64, Number(themeInput.panel_blur) || 0))),
+    }
+    if (!payload.background_image) {
+      payload.background_image = ''
+    }
+    try {
+      const response = await apiFetch('/api/admin/theme', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      const updated = response?.theme
+      if (updated && typeof updated === 'object') {
+        setThemeSettings({ ...defaultTheme, ...(updated as Partial<ThemeSettings>) })
+      }
+      addAlert('success', 'Theme updated')
+      return true
+    } catch (error) {
+      const message = (error as Error)?.message ?? String(error)
+      addAlert('error', 'Unable to update theme: ' + message)
+      return false
+    }
+  }
+
   async function refreshSession() {
     loadingSession = true
     try {
@@ -330,6 +388,7 @@
   }
 
   async function refreshAll() {
+    await loadThemeSettings()
     await refreshSession()
     if (!session.authenticated) return
 
@@ -344,6 +403,10 @@
 
   onMount(async () => {
     await refreshAll()
+  })
+
+  onDestroy(() => {
+    unsubscribeTheme()
   })
 
   async function submitStatus(form: { type: string; text: string }): Promise<boolean> {
@@ -576,12 +639,12 @@
         <div>
           <h1 class="text-3xl md:text-4xl font-semibold text-white/90 flex items-center gap-3">
             <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 border border-white/10 shadow-lg">
-              🤖
+              👨‍✈️
             </span>
-            Pilot Control Deck
+            Pilot's Cockpit
           </h1>
           <p class="text-sm md:text-base text-white/60 max-w-2xl mt-2">
-            Secure web console for managing the Discord bot, owner sync tooling, tracking utilities, and Pilot Chat prompts.
+            pilot &gt; dusekkar
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-3">
@@ -703,6 +766,14 @@
               {hasPerm}
               {setTrackingUserId}
               {clearTrackingData}
+            />
+          {/if}
+          {#if activeTab === 'customization'}
+            <CustomizationTab
+              {cardClass}
+              currentTheme={themeSettings}
+              {defaultTheme}
+              saveTheme={saveThemeSettings}
             />
           {/if}
           {#if activeTab === 'access'}

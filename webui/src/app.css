@@ -5,15 +5,183 @@
 :root {
   color-scheme: dark;
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --app-background-color: #05070f;
+  --app-background-image: none;
+  --app-background-blur: 18px;
+  --app-panel-blur: 8px;
+  --app-text-color-rgb: 241 245 249;
+  --app-text-color: rgb(241 245 249);
+  --app-accent-color-rgb: 96 165 250;
+  --app-accent-color: rgb(96 165 250);
+  --app-accent-secondary-color-rgb: 168 85 247;
+  --app-accent-secondary-color: rgb(168 85 247);
+  --app-accent-warning-color-rgb: 249 115 22;
+  --app-accent-warning-color: rgb(249 115 22);
+  --app-accent-danger-color-rgb: 248 113 113;
+  --app-accent-danger-color: rgb(248 113 113);
 }
 
 body {
-  @apply min-h-screen bg-slate-950 text-slate-100 antialiased;
-  background: radial-gradient(circle at top, rgba(96, 165, 250, 0.15), transparent 55%),
+  @apply min-h-screen antialiased;
+  color: rgb(var(--app-text-color-rgb, 241 245 249));
+  background-color: var(--app-background-color, #05070f);
+  background-image:
+    radial-gradient(circle at top, rgba(96, 165, 250, 0.15), transparent 55%),
     radial-gradient(circle at bottom, rgba(168, 85, 247, 0.12), transparent 45%),
-    #05070f;
+    var(--app-background-image, none);
+  background-size: cover, cover, cover;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-attachment: fixed;
 }
 
 #app {
   @apply min-h-screen;
+}
+
+.panel-surface {
+  --tw-backdrop-blur: blur(var(--app-background-blur, 18px));
+}
+
+.panel-card {
+  --tw-backdrop-blur: blur(var(--app-panel-blur, 8px));
+}
+
+.text-white {
+  color: var(--app-text-color, rgb(241 245 249)) !important;
+}
+
+.text-white\/90 {
+  color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 90%, transparent) !important;
+}
+
+.text-white\/80 {
+  color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 80%, transparent) !important;
+}
+
+.text-white\/70 {
+  color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 70%, transparent) !important;
+}
+
+.text-white\/60 {
+  color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 60%, transparent) !important;
+}
+
+.text-white\/50 {
+  color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 50%, transparent) !important;
+}
+
+.text-white\/40 {
+  color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 40%, transparent) !important;
+}
+
+.text-white\/30 {
+  color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 30%, transparent) !important;
+}
+
+.bg-white\/5 {
+  background-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 5%, transparent) !important;
+}
+
+.bg-white\/10 {
+  background-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 10%, transparent) !important;
+}
+
+.border-white\/5 {
+  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 5%, transparent) !important;
+}
+
+.border-white\/10 {
+  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 10%, transparent) !important;
+}
+
+.border-white\/15 {
+  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 15%, transparent) !important;
+}
+
+.border-white\/20 {
+  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 20%, transparent) !important;
+}
+
+.border-white\/30 {
+  border-color: color-mix(in srgb, var(--app-text-color, rgb(241 245 249)) 30%, transparent) !important;
+}
+
+.text-accent {
+  color: var(--app-accent-color, rgb(96 165 250)) !important;
+}
+
+.border-accent {
+  border-color: var(--app-accent-color, rgb(96 165 250)) !important;
+}
+
+.border-accent\/40 {
+  border-color: color-mix(in srgb, var(--app-accent-color, rgb(96 165 250)) 40%, transparent) !important;
+}
+
+.bg-accent\/20 {
+  background-color: color-mix(in srgb, var(--app-accent-color, rgb(96 165 250)) 20%, transparent) !important;
+}
+
+.bg-accent\/30 {
+  background-color: color-mix(in srgb, var(--app-accent-color, rgb(96 165 250)) 30%, transparent) !important;
+}
+
+.text-accent2 {
+  color: var(--app-accent-secondary-color, rgb(168 85 247)) !important;
+}
+
+.border-accent2 {
+  border-color: var(--app-accent-secondary-color, rgb(168 85 247)) !important;
+}
+
+.border-accent2\/40 {
+  border-color: color-mix(in srgb, var(--app-accent-secondary-color, rgb(168 85 247)) 40%, transparent) !important;
+}
+
+.bg-accent2\/20 {
+  background-color: color-mix(in srgb, var(--app-accent-secondary-color, rgb(168 85 247)) 20%, transparent) !important;
+}
+
+.bg-accent2\/30 {
+  background-color: color-mix(in srgb, var(--app-accent-secondary-color, rgb(168 85 247)) 30%, transparent) !important;
+}
+
+.text-accentWarn {
+  color: var(--app-accent-warning-color, rgb(249 115 22)) !important;
+}
+
+.border-accentWarn {
+  border-color: var(--app-accent-warning-color, rgb(249 115 22)) !important;
+}
+
+.border-accentWarn\/40 {
+  border-color: color-mix(in srgb, var(--app-accent-warning-color, rgb(249 115 22)) 40%, transparent) !important;
+}
+
+.bg-accentWarn\/20 {
+  background-color: color-mix(in srgb, var(--app-accent-warning-color, rgb(249 115 22)) 20%, transparent) !important;
+}
+
+.bg-accentWarn\/30 {
+  background-color: color-mix(in srgb, var(--app-accent-warning-color, rgb(249 115 22)) 30%, transparent) !important;
+}
+
+.text-accentDanger {
+  color: var(--app-accent-danger-color, rgb(248 113 113)) !important;
+}
+
+.border-accentDanger {
+  border-color: var(--app-accent-danger-color, rgb(248 113 113)) !important;
+}
+
+.border-accentDanger\/40 {
+  border-color: color-mix(in srgb, var(--app-accent-danger-color, rgb(248 113 113)) 40%, transparent) !important;
+}
+
+.bg-accentDanger\/20 {
+  background-color: color-mix(in srgb, var(--app-accent-danger-color, rgb(248 113 113)) 20%, transparent) !important;
+}
+
+.bg-accentDanger\/30 {
+  background-color: color-mix(in srgb, var(--app-accent-danger-color, rgb(248 113 113)) 30%, transparent) !important;
 }

@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 import asyncio
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Mapping
 import yaml
 from pilot_chat import setup_pilot_chat
 import ssl
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_FILE = os.getenv('BOT_CONFIG_FILE')
 DEFAULT_DATA_DIR = Path(os.getenv('DATA_DIR', 'data'))
 ALLOWED_USERS_FILE = DEFAULT_DATA_DIR / 'web_allowed_users.json'
+THEME_SETTINGS_FILE = DEFAULT_DATA_DIR / 'web_theme.json'
 
 
 def _load_yaml_options(path: Path) -> dict:
@@ -342,6 +343,18 @@ def save_tracking_data(data):
 
 # --- Web Allowed Users Store -----------------------------------------------
 WEB_ALLOWED_USERS: Dict[str, List[str]] = {}
+DEFAULT_THEME_SETTINGS = {
+    "background_color": "#05070f",
+    "background_image": "",
+    "accent_color": "#60a5fa",
+    "accent_secondary_color": "#a855f7",
+    "accent_warning_color": "#f97316",
+    "accent_danger_color": "#f87171",
+    "text_color": "#f1f5f9",
+    "background_blur": 18,
+    "panel_blur": 8,
+}
+WEB_THEME_SETTINGS: Dict[str, object] = dict(DEFAULT_THEME_SETTINGS)
 
 
 def _normalize_permission_list(perms: Iterable[str] | None) -> List[str]:
@@ -441,6 +454,125 @@ def delete_allowed_user(user_id: str) -> bool:
     removed = WEB_ALLOWED_USERS.pop(uid, None) is not None
     save_allowed_users_data(WEB_ALLOWED_USERS)
     return removed
+
+
+def _validate_hex_color(value, fallback: str, field: str) -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return fallback
+        if text.startswith('#'):
+            text = text[1:]
+        if re.fullmatch(r'[0-9a-fA-F]{6}', text):
+            return '#' + text.lower()
+    raise ValueError(f"invalid_{field}")
+
+
+def _coerce_blur_value(value, fallback: int, field: str) -> int:
+    if value is None:
+        return fallback
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid_{field}")
+    if num < 0:
+        num = 0
+    if num > 64:
+        num = 64
+    return int(round(num))
+
+
+def _merge_theme_settings(base: Mapping[str, object], update: Mapping[str, object] | None) -> Dict[str, object]:
+    result: Dict[str, object] = dict(base)
+    if not update:
+        return result
+    if not isinstance(update, Mapping):
+        raise ValueError("invalid_theme_payload")
+
+    for key in update.keys():
+        if key not in DEFAULT_THEME_SETTINGS:
+            raise ValueError(f"unknown_theme_field:{key}")
+
+    current = dict(result)
+    if 'background_color' in update:
+        current['background_color'] = _validate_hex_color(update.get('background_color'), str(result['background_color']), 'background_color')
+    if 'background_image' in update:
+        raw = update.get('background_image')
+        if raw is None:
+            current['background_image'] = ''
+        else:
+            text = str(raw).strip()
+            if len(text) > 1024:
+                raise ValueError("background_image_too_long")
+            if '\n' in text or '\r' in text:
+                raise ValueError("invalid_background_image")
+            current['background_image'] = text
+    if 'accent_color' in update:
+        current['accent_color'] = _validate_hex_color(update.get('accent_color'), str(result['accent_color']), 'accent_color')
+    if 'accent_secondary_color' in update:
+        current['accent_secondary_color'] = _validate_hex_color(update.get('accent_secondary_color'), str(result['accent_secondary_color']), 'accent_secondary_color')
+    if 'accent_warning_color' in update:
+        current['accent_warning_color'] = _validate_hex_color(update.get('accent_warning_color'), str(result['accent_warning_color']), 'accent_warning_color')
+    if 'accent_danger_color' in update:
+        current['accent_danger_color'] = _validate_hex_color(update.get('accent_danger_color'), str(result['accent_danger_color']), 'accent_danger_color')
+    if 'text_color' in update:
+        current['text_color'] = _validate_hex_color(update.get('text_color'), str(result['text_color']), 'text_color')
+    if 'background_blur' in update:
+        current['background_blur'] = _coerce_blur_value(update.get('background_blur'), int(result['background_blur']), 'background_blur')
+    if 'panel_blur' in update:
+        current['panel_blur'] = _coerce_blur_value(update.get('panel_blur'), int(result['panel_blur']), 'panel_blur')
+
+    return current
+
+
+def save_theme_settings(settings: Mapping[str, object]) -> None:
+    try:
+        THEME_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with THEME_SETTINGS_FILE.open('w', encoding='utf-8') as handle:
+            json.dump(dict(settings), handle, indent=2, sort_keys=True)
+    except Exception as exc:
+        logger.error("Failed to save theme settings to %s: %s", THEME_SETTINGS_FILE, exc)
+
+
+def load_theme_settings(overrides: Mapping[str, object] | None = None) -> Dict[str, object]:
+    global WEB_THEME_SETTINGS
+    base: Dict[str, object] = dict(DEFAULT_THEME_SETTINGS)
+    if overrides:
+        base = _merge_theme_settings(base, overrides)
+    try:
+        with THEME_SETTINGS_FILE.open('r', encoding='utf-8') as handle:
+            raw = json.load(handle)
+        if isinstance(raw, Mapping):
+            base = _merge_theme_settings(base, raw)
+        else:
+            logger.warning("Theme settings file %s did not contain a mapping; resetting to defaults", THEME_SETTINGS_FILE)
+            save_theme_settings(base)
+    except FileNotFoundError:
+        save_theme_settings(base)
+    except json.JSONDecodeError as exc:
+        logger.warning("Failed to parse %s (%s); resetting to defaults", THEME_SETTINGS_FILE, exc)
+        save_theme_settings(base)
+    except Exception as exc:
+        logger.warning("Error loading theme settings from %s: %s", THEME_SETTINGS_FILE, exc)
+    WEB_THEME_SETTINGS = base
+    return dict(WEB_THEME_SETTINGS)
+
+
+def get_theme_settings() -> Dict[str, object]:
+    return dict(WEB_THEME_SETTINGS)
+
+
+def update_theme_settings(update: Mapping[str, object]) -> Dict[str, object]:
+    global WEB_THEME_SETTINGS
+    merged = _merge_theme_settings(WEB_THEME_SETTINGS, update)
+    WEB_THEME_SETTINGS = merged
+    save_theme_settings(WEB_THEME_SETTINGS)
+    return dict(WEB_THEME_SETTINGS)
+
+
+load_theme_settings()
 
 
 ENTRY_REGEX = re.compile(
