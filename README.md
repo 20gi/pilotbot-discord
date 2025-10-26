@@ -34,7 +34,7 @@ A containerised Discord bot with a Svelte/Tailwind control dashboard. The projec
    ```bash
    podman-compose up --build -d
    ```
-   The dashboard will be reachable at `https://<host>:${WEB_PORT}` (default `8443`).
+   The dashboard will be reachable at `https://<host>:${WEB_PORT}` (default `8447`).
 4. Persistent runtime data (including `lillian_tracking.json`) is stored in the host `./data` directory.
 5. Manage the service with:
    ```bash
@@ -59,4 +59,3 @@ A containerised Discord bot with a Svelte/Tailwind control dashboard. The projec
 - Generate strong values for `WEB_SESSION_SECRET` and OAuth secrets.
 - Restrict the exposed dashboard port via firewall rules or Podman network policies.
 - Keep `.env` out of version control and rotate tokens if compromised.
-

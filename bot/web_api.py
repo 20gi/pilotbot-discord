@@ -16,7 +16,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 # Default fallback port for the embedded web server
-DEFAULT_WEB_PORT = 8443
+DEFAULT_WEB_PORT = 8447
 
 
 def _b64encode(data: bytes) -> str:
