@@ -1,5 +1,4 @@
 .env
-data/
 .venv/
-webui/node_modules/
-webui/dist/
+pilot_discord_bot/webui/node_modules/
+pilot_discord_bot/webui/dist/
