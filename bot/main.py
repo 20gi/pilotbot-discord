@@ -5,9 +5,11 @@ from discord.ext import commands
 import aiohttp
 import os
 import json
+import re
 from datetime import datetime, timezone
 import asyncio
 from pathlib import Path
+from typing import Dict, List
 import yaml
 from pilot_chat import setup_pilot_chat
 import ssl
@@ -225,6 +227,62 @@ def save_tracking_data(data):
             json.dump(data, f, indent=2)
     except Exception as e:
         logger.error("Error saving tracking data: %s", e)
+
+
+ENTRY_REGEX = re.compile(
+    r"Duration:</span></strong><span>\s*([^<]+?)\s*</span>"  # duration capture
+    r".*?Joined:</span>.*?hiddenVisually[^>]*>([^<]+)<"      # joined timestamp
+    r"(?:(?:.*?Left:</span>).*?hiddenVisually[^>]*>([^<]+)<)?",
+    re.DOTALL,
+)
+
+
+TIMESTAMP_FORMATS = [
+    "%A, %B %d, %Y %I:%M %p",
+    "%B %d, %Y %I:%M %p",
+    "%m/%d/%Y %I:%M %p",
+    "%m/%d/%Y",
+]
+
+
+def _parse_migration_timestamp(value: str) -> str:
+    cleaned = value.replace('\xa0', ' ').strip()
+    for fmt in TIMESTAMP_FORMATS:
+        try:
+            dt = datetime.strptime(cleaned, fmt)
+            dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognised timestamp format: {value!r}")
+
+
+def parse_lillian_migration(html: str, user_id: int) -> tuple[List[Dict[str, str]], Dict[str, str] | None]:
+    normalized = html.replace('\r', '')
+    matches = ENTRY_REGEX.findall(normalized)
+    if not matches:
+        raise ValueError("No leaderboard entries detected in provided file.")
+
+    leaderboard: List[Dict[str, str]] = []
+    current_session = None
+
+    for duration, joined_raw, left_raw in matches:
+        joined_iso = _parse_migration_timestamp(joined_raw)
+        if left_raw:
+            left_iso = _parse_migration_timestamp(left_raw)
+            leaderboard.append({
+                "duration": duration.strip(),
+                "join_time": joined_iso,
+                "leave_time": left_iso,
+                "user_id": user_id,
+            })
+        elif current_session is None:
+            current_session = {
+                "join_time": joined_iso,
+                "user_id": user_id,
+            }
+
+    return leaderboard, current_session
 
 def format_duration(start_time, end_time):
     """Calculate and format duration between two timestamps"""
@@ -790,6 +848,51 @@ async def clear_tracking(interaction: discord.Interaction):
     }
     save_tracking_data(tracking_data)
     await interaction.response.send_message("tracking data cleared")
+
+
+@tree.command(name='importlillian', description='import tracking data from an exported embed', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def import_lillian(interaction: discord.Interaction, user_id: str, data_file: discord.Attachment):
+    try:
+        user_id_int = int(str(user_id))
+    except ValueError:
+        await interaction.response.send_message("invalid user id", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        raw_bytes = await data_file.read()
+    except Exception as exc:
+        logger.error("Failed to read uploaded migration file: %s", exc)
+        await interaction.followup.send("could not read uploaded file", ephemeral=True)
+        return
+
+    try:
+        text = raw_bytes.decode('utf-8')
+    except UnicodeDecodeError:
+        text = raw_bytes.decode('latin-1')
+
+    try:
+        leaderboard, current_session = parse_lillian_migration(text, user_id_int)
+    except Exception as exc:
+        logger.exception("Failed to parse migration data")
+        await interaction.followup.send(f"failed to parse migration data: {exc}", ephemeral=False)
+        return
+
+    tracking_data = {
+        "tracked_user_id": user_id_int,
+        "current_session": current_session,
+        "leaderboard": leaderboard,
+    }
+    save_tracking_data(tracking_data)
+    logger.info("Imported %d leaderboard entries for user %s", len(leaderboard), user_id_int)
+    await interaction.followup.send(
+        f"imported {len(leaderboard)} sessions for lillian w/ user id {user_id_int}" + (
+            " (current session active)" if current_session else ""
+        ),
+        ephemeral=True,
+    )
 
 # --- Updated Error Handler ---
 @tree.error
