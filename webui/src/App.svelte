@@ -639,21 +639,21 @@
 
 <div class="min-h-screen pb-16">
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
-    <header class={panelClass + ' flex flex-col gap-6'}>
-      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-        <div>
-          <h1 class="text-3xl md:text-4xl font-semibold text-white/90 flex items-center gap-3">
-            <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl glass-chip border shadow-lg">
-              👨‍✈️
-            </span>
-            Pilot's Cockpit
-          </h1>
-          <p class="text-sm md:text-base text-white/60 max-w-2xl mt-2">
-            pilot bot configuragtion
-          </p>
-        </div>
-        <div class="flex flex-wrap items-center gap-3">
-          {#if session.authenticated}
+    {#if session.authenticated}
+      <header class={panelClass + ' flex flex-col gap-6'}>
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+          <div>
+            <h1 class="text-3xl md:text-4xl font-semibold text-white/90 flex items-center gap-3">
+              <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl glass-chip border shadow-lg">
+                👨‍✈️
+              </span>
+              Pilot's Cockpit
+            </h1>
+            <p class="text-sm md:text-base text-white/60 max-w-2xl mt-2">
+              pilot bot configuragtion
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
             <div class="glass-chip px-4 py-2 rounded-2xl border">
               <p class="text-xs uppercase tracking-wide text-white/50">Logged in</p>
               <p class="text-white/80 font-medium">{session.user?.name ?? 'Unknown User'}</p>
@@ -664,39 +664,32 @@
             >
               Logout
             </a>
-          {:else if !loadingSession}
-            <a
-              class="px-4 py-2 rounded-xl border border-accent/40 bg-accent/20 text-accent hover:bg-accent/30 transition"
-              href={loginUrl}
+            <button
+              class="px-4 py-2 rounded-xl border border-white/10 text-white/70 hover:border-white/30 hover:text-white transition"
+              on:click={() => refreshAll()}
             >
-              Login with Discord
-            </a>
-          {/if}
-          <button
-            class="px-4 py-2 rounded-xl border border-white/10 text-white/70 hover:border-white/30 hover:text-white transition"
-            on:click={() => refreshAll()}
-          >
-            Refresh
-          </button>
+              Refresh
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div class="flex flex-wrap gap-3 text-xs text-white/50">
-        <span class="glass-chip px-3 py-1 rounded-full border">
-          Permissions: {session.permissions?.length ? session.permissions.join(', ') : 'none'}
-        </span>
-        {#if statusData?.presence?.status}
+        <div class="flex flex-wrap gap-3 text-xs text-white/50">
           <span class="glass-chip px-3 py-1 rounded-full border">
-            Current Presence: {statusData.presence.status}
+            Permissions: {session.permissions?.length ? session.permissions.join(', ') : 'none'}
           </span>
-        {/if}
-        {#if statusData?.presence?.activity?.name}
-          <span class="glass-chip px-3 py-1 rounded-full border">
-            Activity: {statusData.presence.activity.type ?? 'custom'} • {statusData.presence.activity.name}
-          </span>
-        {/if}
-      </div>
-    </header>
+          {#if statusData?.presence?.status}
+            <span class="glass-chip px-3 py-1 rounded-full border">
+              Current Presence: {statusData.presence.status}
+            </span>
+          {/if}
+          {#if statusData?.presence?.activity?.name}
+            <span class="glass-chip px-3 py-1 rounded-full border">
+              Activity: {statusData.presence.activity.type ?? 'custom'} • {statusData.presence.activity.name}
+            </span>
+          {/if}
+        </div>
+      </header>
+    {/if}
 
     {#if alerts.length}
       <div class="space-y-2">
@@ -711,17 +704,10 @@
     {#if loadingSession}
       <div class={panelClass + ' flex items-center justify-center text-white/60'}>Loading session…</div>
     {:else if !session.authenticated}
-      <section class="landing-panel">
-        <div class="landing-decoration"></div>
-        <div class="landing-content">
-          <span class="landing-chip">Pilot Control Deck</span>
-          <h2 class="text-3xl md:text-4xl font-semibold text-white/90">Welcome aboard</h2>
-          <p class="text-white/70 max-w-xl">
-            Sign in with Discord to manage the bot, adjust presence, and keep the cockpit running smoothly.
-          </p>
-          <div class="landing-actions">
-            <a class="glass-action" href={loginUrl}>Login with Discord</a>
-          </div>
+      <section class="login-panel">
+        <div class="login-card">
+          <h1 class="login-title">Pilot's Cockpit</h1>
+          <a class="login-button" href={loginUrl}>Login with Discord</a>
         </div>
       </section>
     {:else if allowedTabs.length === 0}
