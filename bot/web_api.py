@@ -422,7 +422,7 @@ class WebAPIServer:
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
 
-    async def handle_index(self, request: web.Request) -> web.StreamResponse:
+    def _build_index_response(self) -> web.StreamResponse:
         if getattr(self, "ui_index", None) and self.ui_index.is_file():
             return web.FileResponse(path=self.ui_index)
 
@@ -434,6 +434,35 @@ class WebAPIServer:
             "</body></html>"
         )
         return web.Response(text=fallback, content_type="text/html")
+
+    async def handle_index(self, request: web.Request) -> web.StreamResponse:
+        tail = request.match_info.get("tail", "")
+        tail = tail.strip("/")
+
+        if not tail:
+            return self._build_index_response()
+
+        last_segment = tail.split("/")[-1]
+        # Treat requests that look like app routes (no file extension) as SPA routes.
+        if "." not in last_segment:
+            return self._build_index_response()
+
+        if not self.ui_root.is_dir():
+            raise web.HTTPNotFound()
+
+        try:
+            root_path = self.ui_root.resolve()
+            target_path = (self.ui_root / tail).resolve()
+        except FileNotFoundError:
+            raise web.HTTPNotFound()
+
+        if root_path not in target_path.parents:
+            raise web.HTTPNotFound()
+
+        if not target_path.is_file():
+            raise web.HTTPNotFound()
+
+        return web.FileResponse(path=target_path)
 
     async def handle_login(self, request: web.Request) -> web.Response:
         if not (self.oauth_client_id and self.oauth_redirect_uri):
