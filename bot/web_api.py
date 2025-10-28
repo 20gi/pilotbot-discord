@@ -149,7 +149,12 @@ class WebAPIServer:
         )
 
         self.app = web.Application(
-            middlewares=[self._rate_limit_middleware, self._session_middleware, self._security_headers_middleware],
+            middlewares=[
+                self._rate_limit_middleware,
+                self._session_middleware,
+                self._logging_middleware,
+                self._security_headers_middleware,
+            ],
             client_max_size=2*1024*1024  # 2MB limit
         )
         self._setup_routes()
@@ -207,10 +212,16 @@ class WebAPIServer:
         return has_perm
 
     def _get_client_ip(self, request: web.Request) -> str:
-        """Get client IP, respecting X-Forwarded-For if behind proxy."""
+        """Get client IP, respecting proxy headers when present."""
+        cf_ip = request.headers.get("CF-Connecting-IP") or request.headers.get("True-Client-IP")
+        if cf_ip:
+            return cf_ip.split(",")[0].strip()
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
             return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
         return request.remote or "unknown"
 
     def _generate_csrf_token(self, user_id: str) -> str:
@@ -290,6 +301,49 @@ class WebAPIServer:
             )
         
         return response
+
+    @web.middleware
+    async def _logging_middleware(self, request: web.Request, handler):
+        """Log request lifecycle information including proxy headers and user identity."""
+        start = time.perf_counter()
+        status: Optional[int] = None
+        try:
+            response = await handler(request)
+            status = response.status
+            return response
+        except web.HTTPException as exc:
+            status = exc.status
+            raise
+        except Exception:
+            status = 500
+            raise
+        finally:
+            duration_ms = (time.perf_counter() - start) * 1000
+            client_ip = self._get_client_ip(request)
+            x_forwarded_for = request.headers.get("X-Forwarded-For") or "-"
+            x_real_ip = request.headers.get("X-Real-IP") or "-"
+            cf_connecting_ip = request.headers.get("CF-Connecting-IP") or "-"
+            user = request.get("user")
+            user_fragment = ""
+            if user:
+                uid, username = user
+                if uid and username:
+                    user_fragment = f" user={username}({uid})"
+                elif uid:
+                    user_fragment = f" user_id={uid}"
+
+            logger.info(
+                "HTTP %s %s -> %s %.1fms ip=%s xff=%s xri=%s cf=%s%s",
+                request.method,
+                str(request.rel_url),
+                status if status is not None else "-",
+                duration_ms,
+                client_ip,
+                x_forwarded_for,
+                x_real_ip,
+                cf_connecting_ip,
+                user_fragment,
+            )
 
     async def _verify_csrf(self, request: web.Request) -> bool:
         """Verify CSRF token for state-changing operations."""
