@@ -1465,6 +1465,6 @@ async def start_web_server(
     scheme = "https" if ssl_context else "http"
     logger.info("Web API server started on %s://%s:%s", scheme, host, port)
 
-    # Keep a reference on the bot for potential future shutdown
+    # keep a reference on the bot for potential future shutdown
     setattr(bot, "_web_api_runner", runner)
     setattr(bot, "_web_api_site", site)

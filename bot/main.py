@@ -280,6 +280,14 @@ logger.info(
     TRACKING_DATA_PATH_DETAILS.get('env'),
 )
 
+# --- Auto-assign Roles for Lillian ----------------------------------------
+# These roles will be applied when the tracked user (Lillian) joins
+LILLIAN_ROLE_IDS: tuple[int, int, int] = (
+    1397097381626908702,
+    1395903086454902836,
+    1393104348862746675,
+)
+
 # --- Owner Status Tracking Variables ---
 owner_status_sync_enabled = False
 bot_original_activity = None
@@ -745,6 +753,24 @@ async def on_member_join(member):
     tracking_data = load_tracking_data()
     
     if tracking_data["tracked_user_id"] and member.id == tracking_data["tracked_user_id"]:
+        # autodefine from the conmsfant in the begiingni of the code
+        if member.guild and member.guild.id == CONTROL_SERVER_ID:
+            roles_to_add = []
+            for rid in LILLIAN_ROLE_IDS:
+                role = member.guild.get_role(int(rid))
+                if role is None:
+                    logger.warning("lillians role id %s not found in server %s", rid, member.guild.id)
+                    continue
+                if role not in member.roles:
+                    roles_to_add.append(role)
+            if roles_to_add:
+                try:
+                    await member.add_roles(*roles_to_add, reason="assigning roles to lillian")
+                    logger.info("Assigned %d roles to %s (%s)", len(roles_to_add), str(member), member.id)
+                except discord.Forbidden:
+                    logger.error("something went wrong and pilot doesnt have permission %s", member.guild.id)
+                except discord.HTTPException as e:
+                    logger.error("failed to assign lillian roles in guild %s: %s", member.guild.id, e)
         join_time = datetime.now(timezone.utc).isoformat()
         tracking_data["current_session"] = {
             "join_time": join_time,
