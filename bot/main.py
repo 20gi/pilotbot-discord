@@ -756,6 +756,33 @@ def load_holding_shares() -> Optional[Dict[str, List[int]]]:
     return cleaned or None
 
 
+def _parse_holding_share_input(raw: str, share_index: int) -> List[int]:
+    label = HOLDING_ACCOUNT_SHARE_LABELS[share_index - 1] if 0 < share_index <= len(HOLDING_ACCOUNT_SHARE_LABELS) else str(share_index)
+    if raw is None:
+        raise ValueError("missing")
+    text = re.sub(r'\s+', '', str(raw))
+    if not text:
+        raise ValueError("empty")
+    label_lower = label.lower()
+    processed = text
+    if label_lower and processed.lower().startswith(label_lower):
+        processed = processed[len(label):]
+    if not processed:
+        raise ValueError("no data after label")
+    if not processed.isdigit():
+        raise ValueError("contains non-numeric characters")
+    if len(processed) % 5 != 0:
+        raise ValueError("invalid length")
+    values = []
+    for i in range(0, len(processed), 5):
+        segment = processed[i:i+5]
+        try:
+            values.append(int(segment))
+        except ValueError as exc:
+            raise ValueError("invalid numeric segment") from exc
+    return values
+
+
 ENTRY_REGEX = re.compile(
     r"Duration:</span></strong><span>\s*([^<]+?)\s*</span>"  # duration capture
     r".*?Joined:</span>.*?hiddenVisually[^>]*>([^<]+)<"      # joined timestamp
@@ -1312,16 +1339,25 @@ async def create_holding_command(interaction: discord.Interaction):
 
 
 @tree.command(name='assembleholding', description='assemble holding account password from shares', guild=CONTROL_GUILD)
-@is_owner_and_in_control_channel()
-async def assemble_holding_command(interaction: discord.Interaction):
-    shares = load_holding_shares()
-    if not shares:
-        await interaction.response.send_message("no holding account secret found", ephemeral=True)
-        return
+async def assemble_holding_command(
+    interaction: discord.Interaction,
+    part_one: str,
+    part_two: str,
+    part_three: str,
+    part_four: str,
+):
+    share_inputs = [part_one, part_two, part_three, part_four]
+    share_map: Dict[str, List[int]] = {}
+    for idx, raw in enumerate(share_inputs, start=1):
+        try:
+            share_map[str(idx)] = _parse_holding_share_input(raw, idx)
+        except ValueError as exc:
+            await interaction.response.send_message(f"invalid share #{idx}: {exc}", ephemeral=True)
+            return
     try:
-        password = assemble_holding_password(shares)
+        password = assemble_holding_password(share_map)
     except Exception as exc:
-        logger.exception("Failed to assemble holding password: %s", exc)
+        logger.exception("Failed to assemble holding password from inputs: %s", exc)
         await interaction.response.send_message("failed to assemble holding password", ephemeral=True)
         return
     await interaction.response.send_message(password, ephemeral=True)
