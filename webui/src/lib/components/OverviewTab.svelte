@@ -25,7 +25,16 @@
     <p class="text-white/40 text-xs mt-2">
       Ping:
       {#if statusData?.latency}
-        {(statusData.latency * 1000).toFixed(0)} ms{statusData?.holding_share?.value ? `, ${statusData.holding_share.value}` : ''}
+        {(statusData.latency * 1000).toFixed(0)} ms
+        {#if statusData?.holding_share}
+          , {#if statusData.holding_share.url}
+            <a href={statusData.holding_share.url} target="_blank" rel="noopener noreferrer" class="text-white/80 hover:text-white underline underline-offset-2">
+              {statusData.holding_share.value ?? 'View share'}
+            </a>
+          {:else if statusData.holding_share.value}
+            {statusData.holding_share.value}
+          {/if}
+        {/if}
       {:else}
         n/a
       {/if}

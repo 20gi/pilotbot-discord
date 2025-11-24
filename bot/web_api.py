@@ -408,6 +408,7 @@ class WebAPIServer:
         self.app.router.add_post("/api/pilot/mode", self.handle_pilot_mode)
         self.app.router.add_post("/api/pilot/style", self.handle_pilot_style)
         self.app.router.add_post("/api/pilot/chat", self.handle_pilot_chat)
+        self.app.router.add_get("/api/holding/share/{index}", self.handle_holding_share)
 
         # Admin
         self.app.router.add_get("/api/admin/permissions", self.handle_admin_permissions_list)
@@ -668,7 +669,7 @@ class WebAPIServer:
         else:
             original_activity_payload = None
 
-        holding_share_value = None
+        holding_share_payload = None
         try:
             role_guard = getattr(main_module, "HOLDING_ACCOUNT_ROLE_ID", None)
             if role_guard:
@@ -682,7 +683,14 @@ class WebAPIServer:
                 if member and any(getattr(role, "id", None) == role_guard for role in getattr(member, "roles", [])):
                     getter = getattr(main_module, "get_holding_share_for_display", None)
                     if callable(getter):
-                        holding_share_value = getter()
+                        share_data = getter()
+                        if isinstance(share_data, dict):
+                            value = share_data.get("value")
+                            url = share_data.get("url")
+                            if value or url:
+                                holding_share_payload = {"value": value, "url": url}
+                        elif isinstance(share_data, str):
+                            holding_share_payload = {"value": share_data}
         except Exception as exc:
             logger.debug("Failed to resolve holding share for %s: %s", uid, exc)
 
@@ -704,10 +712,83 @@ class WebAPIServer:
             },
             "holding_share": {
                 "index": getattr(main_module, "HOLDING_ACCOUNT_SHARE_COUNT", 4),
-                "value": holding_share_value,
-            } if holding_share_value else None,
+                "value": holding_share_payload.get("value"),
+                "url": holding_share_payload.get("url"),
+            } if holding_share_payload else None,
         }
         return web.json_response(data)
+
+    async def handle_holding_share(self, request: web.Request) -> web.StreamResponse:
+        user = request.get("user")
+        if not user:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        uid, _ = user
+        if not self._has_perm(uid, "view"):
+            return web.json_response({"error": "forbidden"}, status=403)
+
+        index_raw = request.match_info.get("index")
+        try:
+            index = int(index_raw)
+        except (TypeError, ValueError):
+            raise web.HTTPNotFound()
+
+        main_module = self._main()
+        if not getattr(main_module, "HOLDING_TEST_MODE", False):
+            raise web.HTTPNotFound()
+
+        share_count = getattr(main_module, "HOLDING_ACCOUNT_SHARE_COUNT", 4)
+        if index != share_count:
+            raise web.HTTPNotFound()
+
+        role_guard = getattr(main_module, "HOLDING_ACCOUNT_ROLE_ID", None)
+        if not role_guard:
+            return web.json_response({"error": "forbidden"}, status=403)
+
+        guild = self.bot.get_guild(getattr(main_module, "CONTROL_SERVER_ID", 0))
+        member = guild.get_member(int(uid)) if guild else None
+        if member is None and guild:
+            try:
+                member = await guild.fetch_member(int(uid))
+            except Exception:
+                member = None
+        if not member or not any(getattr(role, "id", None) == role_guard for role in getattr(member, "roles", [])):
+            return web.json_response({"error": "forbidden"}, status=403)
+
+        getter = getattr(main_module, "get_cached_test_share_string", None)
+        if not callable(getter):
+            raise web.HTTPNotFound()
+        share_value = getter(index)
+        if not share_value:
+            payload = getattr(main_module, "load_holding_secret_payload", None)
+            formatter = getattr(main_module, "_format_holding_share", None)
+            if callable(payload):
+                data = payload()
+                if isinstance(data, dict):
+                    share_strings = data.get("share_strings")
+                    if isinstance(share_strings, dict):
+                        share_value = share_strings.get(str(index))
+                    if not share_value and callable(formatter):
+                        raw_shares = data.get("shares")
+                        if isinstance(raw_shares, dict):
+                            raw_part = raw_shares.get(str(index))
+                            if isinstance(raw_part, Iterable):
+                                try:
+                                    share_value = formatter(index, list(raw_part))
+                                except Exception:
+                                    share_value = None
+            if not share_value:
+                raise web.HTTPNotFound()
+
+        labels = getattr(main_module, "HOLDING_ACCOUNT_SHARE_LABELS", ())
+        label = str(index)
+        if isinstance(labels, (list, tuple)) and len(labels) >= index:
+            label = str(labels[index - 1])
+
+        body = (
+            f"this is part {label} of the password. if this is found out to be shared, the password will be reset.\n"
+            f"{share_value}"
+        )
+        return web.Response(text=body, content_type="text/plain; charset=utf-8")
 
     async def handle_theme_get(self, request: web.Request) -> web.Response:
         """Return the current theme configuration. Available without authentication."""

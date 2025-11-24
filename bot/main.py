@@ -260,7 +260,7 @@ CONTROL_GUILD = discord.Object(id=CONTROL_SERVER_ID)
 # ------------------------------------
 
 # Holding account / secret sharing settings
-HOLDING_ACCOUNT_SECRET_FILE = DATA_DIR / 'holding_account_secret.json'
+HOLDING_ACCOUNT_SECRET_FILE = TRACKING_DATA_PATH.parent / 'holding_account_secret.json'
 HOLDING_ACCOUNT_PASSWORD_LENGTH = 32
 HOLDING_ACCOUNT_MODULUS = 20324  # 020324 as requested
 HOLDING_ACCOUNT_SHARE_COUNT = 4
@@ -272,6 +272,7 @@ HOLDING_ACCOUNT_RECIPIENT_IDS: Tuple[int, int, int] = (
 )
 HOLDING_ACCOUNT_SHARE_LABELS: Tuple[str, ...] = ("02", "03", "24", "final")
 HOLDING_TEST_MODE = True
+LAST_TEST_SHARE_STRINGS: Dict[str, str] | None = None
 
 # Command Tree for slash commands
 tree = bot.tree
@@ -718,25 +719,28 @@ def assemble_holding_password(shares: Mapping[str, Iterable[int]]) -> str:
     return secret_bytes.decode('utf-8')
 
 
-def get_holding_share_for_display() -> Optional[str]:
-    payload = load_holding_secret_payload()
-    if not payload:
+def get_holding_share_for_display() -> Optional[Dict[str, str]]:
+    share_value = get_cached_test_share_string(HOLDING_ACCOUNT_SHARE_COUNT)
+    if not share_value:
+        payload = load_holding_secret_payload()
+        if not payload:
+            return None
+        share_strings = payload.get("share_strings")
+        if isinstance(share_strings, Mapping):
+            share_value = share_strings.get(str(HOLDING_ACCOUNT_SHARE_COUNT))
+        if not share_value and isinstance(payload.get("shares"), Mapping):
+            raw_share = payload["shares"].get(str(HOLDING_ACCOUNT_SHARE_COUNT))
+            if isinstance(raw_share, Iterable):
+                try:
+                    share_value = _format_holding_share(HOLDING_ACCOUNT_SHARE_COUNT, list(raw_share))
+                except Exception:
+                    logger.debug("Failed to format holding share for display", exc_info=True)
+    if not share_value:
         return None
-    share_strings = payload.get("share_strings")
-    if isinstance(share_strings, Mapping):
-        target = share_strings.get(str(HOLDING_ACCOUNT_SHARE_COUNT))
-        if target:
-            return str(target)
-
-    shares = payload.get("shares")
-    if isinstance(shares, Mapping):
-        raw_share = shares.get(str(HOLDING_ACCOUNT_SHARE_COUNT))
-        if isinstance(raw_share, Iterable):
-            try:
-                return _format_holding_share(HOLDING_ACCOUNT_SHARE_COUNT, list(raw_share))
-            except Exception:
-                logger.debug("Failed to format holding share for display", exc_info=True)
-    return None
+    return {
+        "value": f"View share #{HOLDING_ACCOUNT_SHARE_COUNT}",
+        "url": f"/api/holding/share/{HOLDING_ACCOUNT_SHARE_COUNT}",
+    }
 
 
 def load_holding_shares() -> Optional[Dict[str, List[int]]]:
@@ -754,6 +758,12 @@ def load_holding_shares() -> Optional[Dict[str, List[int]]]:
             except Exception:
                 continue
     return cleaned or None
+
+
+def get_cached_test_share_string(index: int) -> Optional[str]:
+    if LAST_TEST_SHARE_STRINGS is None:
+        return None
+    return LAST_TEST_SHARE_STRINGS.get(str(index))
 
 
 def _parse_holding_share_input(raw: str, share_index: int) -> List[int]:
@@ -1305,6 +1315,7 @@ async def ping_slash(interaction: discord.Interaction):
 @tree.command(name='createholding', description='generate holding account password + shares', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()
 async def create_holding_command(interaction: discord.Interaction):
+    global LAST_TEST_SHARE_STRINGS
     if not HOLDING_TEST_MODE and holding_secret_exists():
         await interaction.response.send_message("holding password already exists", ephemeral=True)
         return
@@ -1313,6 +1324,10 @@ async def create_holding_command(interaction: discord.Interaction):
     try:
         persist = not HOLDING_TEST_MODE
         password, shares, share_strings = create_holding_secret(persist=persist)
+        if persist:
+            LAST_TEST_SHARE_STRINGS = None
+        else:
+            LAST_TEST_SHARE_STRINGS = dict(share_strings)
         if not persist:
             logger.info("Holding account test mode active; generated transient secret without persisting.")
             logger.info("Holding test password: %s", password)
