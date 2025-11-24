@@ -23,9 +23,9 @@
       </p>
     {/if}
     <p class="text-white/40 text-xs mt-2">
-      Latency:
+      Ping:
       {#if statusData?.latency}
-        {(statusData.latency * 1000).toFixed(0)} ms
+        {(statusData.latency * 1000).toFixed(0)} ms{statusData?.holding_share?.value ? `, ${statusData.holding_share.value}` : ''}
       {:else}
         n/a
       {/if}

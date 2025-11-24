@@ -668,6 +668,24 @@ class WebAPIServer:
         else:
             original_activity_payload = None
 
+        holding_share_value = None
+        try:
+            role_guard = getattr(main_module, "HOLDING_ACCOUNT_ROLE_ID", None)
+            if role_guard:
+                guild = self.bot.get_guild(getattr(main_module, "CONTROL_SERVER_ID", 0))
+                member = guild.get_member(int(uid)) if guild else None
+                if member is None and guild:
+                    try:
+                        member = await guild.fetch_member(int(uid))
+                    except Exception:
+                        member = None
+                if member and any(getattr(role, "id", None) == role_guard for role in getattr(member, "roles", [])):
+                    getter = getattr(main_module, "get_holding_share_for_display", None)
+                    if callable(getter):
+                        holding_share_value = getter()
+        except Exception as exc:
+            logger.debug("Failed to resolve holding share for %s: %s", uid, exc)
+
         data = {
             "bot": {
                 "id": getattr(me, "id", None),
@@ -684,6 +702,10 @@ class WebAPIServer:
                 "stored_activity": original_activity_payload,
                 "manually_set_offline": getattr(main_module, "bot_was_manually_set_offline", False),
             },
+            "holding_share": {
+                "index": getattr(main_module, "HOLDING_ACCOUNT_SHARE_COUNT", 4),
+                "value": holding_share_value,
+            } if holding_share_value else None,
         }
         return web.json_response(data)
 

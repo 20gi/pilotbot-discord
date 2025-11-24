@@ -6,10 +6,12 @@ import aiohttp
 import os
 import json
 import re
+import secrets
+import string
 from datetime import datetime, timezone
 import asyncio
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import yaml
 from pilot_chat import setup_pilot_chat
 import ssl
@@ -256,6 +258,20 @@ MONITORING_CHANNEL_ID = _int_with_default('monitoring_channel_id', 1399788089307
 WEB_ACTIVITY_CHANNEL_ID = _parse_int(OPTIONS.get('web_activity_channel_id'))
 CONTROL_GUILD = discord.Object(id=CONTROL_SERVER_ID)
 # ------------------------------------
+
+# Holding account / secret sharing settings
+HOLDING_ACCOUNT_SECRET_FILE = DATA_DIR / 'holding_account_secret.json'
+HOLDING_ACCOUNT_PASSWORD_LENGTH = 32
+HOLDING_ACCOUNT_MODULUS = 20324  # 020324 as requested
+HOLDING_ACCOUNT_SHARE_COUNT = 4
+HOLDING_ACCOUNT_ROLE_ID = 1397084107103670324
+HOLDING_ACCOUNT_RECIPIENT_IDS: Tuple[int, int, int] = (
+    534177364314292244,
+    481264459541774356,
+    824810834131156992,
+)
+HOLDING_ACCOUNT_SHARE_LABELS: Tuple[str, ...] = ("02", "03", "24", "final")
+HOLDING_TEST_MODE = True
 
 # Command Tree for slash commands
 tree = bot.tree
@@ -608,6 +624,137 @@ def update_theme_settings(update: Mapping[str, object]) -> Dict[str, object]:
 
 load_theme_settings()
 
+# --- Holding account secret management ------------------------------------
+def _generate_holding_password(length: int = HOLDING_ACCOUNT_PASSWORD_LENGTH) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _format_holding_share(index: int, values: Sequence[int]) -> str:
+    # Keep the share numeric-only; pad each value to 5 digits (modulus < 100000)
+    label = HOLDING_ACCOUNT_SHARE_LABELS[index - 1] if 0 <= index - 1 < len(HOLDING_ACCOUNT_SHARE_LABELS) else str(index)
+    return f"{label}{''.join(f'{int(v):05d}' for v in values)}"
+
+
+def _split_holding_secret(secret_text: str) -> tuple[List[List[int]], Dict[str, str]]:
+    secret_bytes = secret_text.encode('utf-8')
+    shares: List[List[int]] = [[] for _ in range(HOLDING_ACCOUNT_SHARE_COUNT)]
+    for byte_val in secret_bytes:
+        random_parts = [secrets.randbelow(HOLDING_ACCOUNT_MODULUS) for _ in range(HOLDING_ACCOUNT_SHARE_COUNT - 1)]
+        final_piece = (byte_val - sum(random_parts)) % HOLDING_ACCOUNT_MODULUS
+        random_parts.append(final_piece)
+        for idx, value in enumerate(random_parts):
+            shares[idx].append(int(value))
+
+    share_strings = {str(idx + 1): _format_holding_share(idx + 1, share) for idx, share in enumerate(shares)}
+    return shares, share_strings
+
+
+def save_holding_secret_payload(payload: Mapping[str, object]) -> None:
+    try:
+        HOLDING_ACCOUNT_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with HOLDING_ACCOUNT_SECRET_FILE.open('w', encoding='utf-8') as handle:
+            json.dump(payload, handle, indent=2)
+    except Exception as exc:
+        logger.error("Failed to save holding account secret to %s: %s", HOLDING_ACCOUNT_SECRET_FILE, exc)
+
+
+def load_holding_secret_payload() -> Optional[Dict[str, object]]:
+    try:
+        with HOLDING_ACCOUNT_SECRET_FILE.open('r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.error("Failed to load holding account secret: %s", exc)
+        return None
+
+
+def holding_secret_exists() -> bool:
+    return HOLDING_ACCOUNT_SECRET_FILE.exists()
+
+
+def create_holding_secret(*, persist: bool = True) -> tuple[str, Dict[str, List[int]], Dict[str, str]]:
+    if persist and HOLDING_ACCOUNT_SECRET_FILE.exists():
+        raise FileExistsError("holding_secret_exists")
+    password = _generate_holding_password()
+    shares, share_strings = _split_holding_secret(password)
+    payload = {
+        "password": password,
+        "modulus": HOLDING_ACCOUNT_MODULUS,
+        "share_count": HOLDING_ACCOUNT_SHARE_COUNT,
+        "shares": {str(idx + 1): share for idx, share in enumerate(shares)},
+        "share_strings": share_strings,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if persist:
+        save_holding_secret_payload(payload)
+    return password, {str(idx + 1): share for idx, share in enumerate(shares)}, share_strings
+
+
+def assemble_holding_password(shares: Mapping[str, Iterable[int]]) -> str:
+    expected_keys = [str(i) for i in range(1, HOLDING_ACCOUNT_SHARE_COUNT + 1)]
+    ordered_shares: List[List[int]] = []
+    for key in expected_keys:
+        if key not in shares:
+            raise ValueError(f"missing_share_{key}")
+        raw_share = shares[key]
+        if not isinstance(raw_share, Iterable):
+            raise ValueError(f"invalid_share_{key}")
+        ordered_shares.append([int(v) for v in raw_share])
+
+    lengths = {len(part) for part in ordered_shares}
+    if len(lengths) != 1:
+        raise ValueError("share_length_mismatch")
+
+    byte_count = lengths.pop()
+    secret_bytes = bytearray()
+    for idx in range(byte_count):
+        total = sum(part[idx] for part in ordered_shares) % HOLDING_ACCOUNT_MODULUS
+        if total < 0 or total > 255:
+            raise ValueError("invalid_reconstructed_value")
+        secret_bytes.append(total)
+    return secret_bytes.decode('utf-8')
+
+
+def get_holding_share_for_display() -> Optional[str]:
+    payload = load_holding_secret_payload()
+    if not payload:
+        return None
+    share_strings = payload.get("share_strings")
+    if isinstance(share_strings, Mapping):
+        target = share_strings.get(str(HOLDING_ACCOUNT_SHARE_COUNT))
+        if target:
+            return str(target)
+
+    shares = payload.get("shares")
+    if isinstance(shares, Mapping):
+        raw_share = shares.get(str(HOLDING_ACCOUNT_SHARE_COUNT))
+        if isinstance(raw_share, Iterable):
+            try:
+                return _format_holding_share(HOLDING_ACCOUNT_SHARE_COUNT, list(raw_share))
+            except Exception:
+                logger.debug("Failed to format holding share for display", exc_info=True)
+    return None
+
+
+def load_holding_shares() -> Optional[Dict[str, List[int]]]:
+    payload = load_holding_secret_payload()
+    if not payload:
+        return None
+    raw_shares = payload.get("shares")
+    if not isinstance(raw_shares, Mapping):
+        return None
+    cleaned: Dict[str, List[int]] = {}
+    for key, val in raw_shares.items():
+        if isinstance(val, Iterable):
+            try:
+                cleaned[str(key)] = [int(v) for v in val]
+            except Exception:
+                continue
+    return cleaned or None
+
 
 ENTRY_REGEX = re.compile(
     r"Duration:</span></strong><span>\s*([^<]+?)\s*</span>"  # duration capture
@@ -715,6 +862,44 @@ async def send_web_activity_message(message=None, embed=None):
             logger.warning("Web activity channel %s not found", WEB_ACTIVITY_CHANNEL_ID)
     except Exception as e:
         logger.error("Error sending web activity message: %s", e)
+
+
+async def _deliver_holding_shares(share_strings: Mapping[str, str]) -> tuple[bool, List[str]]:
+    """Send the first three holding shares to the configured recipient IDs."""
+    errors: List[str] = []
+    for idx, user_id in enumerate(HOLDING_ACCOUNT_RECIPIENT_IDS, start=1):
+        share_value = share_strings.get(str(idx))
+        if not share_value:
+            errors.append(f"missing_share_{idx}")
+            continue
+
+        label = HOLDING_ACCOUNT_SHARE_LABELS[idx - 1] if idx - 1 < len(HOLDING_ACCOUNT_SHARE_LABELS) else str(idx)
+
+        try:
+            user = bot.get_user(user_id) or await bot.fetch_user(user_id)
+        except Exception as exc:
+            logger.error("Failed to fetch user %s for holding share #%d: %s", user_id, idx, exc)
+            errors.append(f"user_unavailable_{user_id}")
+            continue
+
+        if not user:
+            errors.append(f"user_unavailable_{user_id}")
+            continue
+
+        try:
+            if HOLDING_TEST_MODE:
+                body = (
+                    f"this is part {label} of the password. if this is found out to be shared, the password will be reset.\n"
+                    f"{share_value}"
+                )
+            else:
+                body = f"Holding account share #{idx}: {share_value}"
+            await user.send(body)
+        except Exception as exc:
+            logger.error("Failed to DM holding share #%d to %s: %s", idx, user_id, exc)
+            errors.append(f"dm_failed_{user_id}")
+
+    return len(errors) == 0, errors
 
 # --- Owner Presence Tracking ---
 @bot.event
@@ -1068,6 +1253,54 @@ async def on_ready():
 async def ping_slash(interaction: discord.Interaction):
     ms = int(round(bot.latency * 1000))
     await interaction.response.send_message(f"ping: {ms}ms")
+
+
+@tree.command(name='createholding', description='generate holding account password + shares', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def create_holding_command(interaction: discord.Interaction):
+    if not HOLDING_TEST_MODE and holding_secret_exists():
+        await interaction.response.send_message("holding password already exists", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    try:
+        persist = not HOLDING_TEST_MODE
+        _password, _shares, share_strings = create_holding_secret(persist=persist)
+        if not persist:
+            logger.info("Holding account test mode active; generated transient secret without persisting.")
+    except FileExistsError:
+        await interaction.followup.send("holding password already exists", ephemeral=True)
+        return
+    except Exception as exc:
+        logger.exception("Failed to generate holding account secret: %s", exc)
+        await interaction.followup.send("failed to create holding password", ephemeral=True)
+        return
+
+    success, errors = await _deliver_holding_shares(share_strings)
+    if success:
+        await interaction.followup.send("done", ephemeral=True)
+    else:
+        await interaction.followup.send(
+            "holding password saved but failed to DM some shares: " + ", ".join(errors),
+            ephemeral=True,
+        )
+
+
+@tree.command(name='assembleholding', description='assemble holding account password from shares', guild=CONTROL_GUILD)
+@is_owner_and_in_control_channel()
+async def assemble_holding_command(interaction: discord.Interaction):
+    shares = load_holding_shares()
+    if not shares:
+        await interaction.response.send_message("no holding account secret found", ephemeral=True)
+        return
+    try:
+        password = assemble_holding_password(shares)
+    except Exception as exc:
+        logger.exception("Failed to assemble holding password: %s", exc)
+        await interaction.response.send_message("failed to assemble holding password", ephemeral=True)
+        return
+    await interaction.response.send_message(password, ephemeral=True)
+
 
 @tree.command(name='updatebio', description='update the bot bio', guild=CONTROL_GUILD)
 @is_owner_and_in_control_channel()
