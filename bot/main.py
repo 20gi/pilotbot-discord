@@ -1303,7 +1303,7 @@ async def create_holding_command(interaction: discord.Interaction):
 
     success, errors = await _deliver_holding_shares(share_strings)
     if success:
-        await interaction.followup.send("done", ephemeral=True)
+        await interaction.followup.send("done", ephemeral=False)
     else:
         await interaction.followup.send(
             "holding password saved but failed to DM some shares: " + ", ".join(errors),
