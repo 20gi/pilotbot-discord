@@ -788,7 +788,7 @@ class WebAPIServer:
             f"this is part {label} of the password. if this is found out to be shared, the password will be reset.\n"
             f"{share_value}"
         )
-        return web.Response(text=body, content_type="text/plain; charset=utf-8")
+        return web.Response(text=body, content_type="text/plain", charset="utf-8")
 
     async def handle_theme_get(self, request: web.Request) -> web.Response:
         """Return the current theme configuration. Available without authentication."""
