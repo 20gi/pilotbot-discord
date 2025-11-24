@@ -887,14 +887,34 @@ async def _deliver_holding_shares(share_strings: Mapping[str, str]) -> tuple[boo
             continue
 
         try:
-            if HOLDING_TEST_MODE:
-                body = (
-                    f"this is part {label} of the password. if this is found out to be shared, the password will be reset.\n"
-                    f"{share_value}"
-                )
-            else:
-                body = f"Holding account share #{idx}: {share_value}"
-            await user.send(body)
+            channel = user.dm_channel or await user.create_dm()
+        except Exception as exc:
+            logger.error("Failed to create DM channel for %s: %s", user_id, exc)
+            errors.append(f"dm_channel_failed_{user_id}")
+            continue
+
+        if HOLDING_TEST_MODE:
+            body = (
+                f"this is part {label} of the password. if this is found out to be shared, the password will be reset.\n"
+                f"{share_value}"
+            )
+        else:
+            body = f"Holding account share #{idx}: {share_value}"
+
+        try:
+            async for previous in channel.history(limit=1):
+                if previous.author == bot.user:
+                    try:
+                        await previous.delete()
+                        logger.debug("Deleted previous holding share DM to %s", user_id)
+                    except Exception as exc:
+                        logger.debug("Failed to delete previous DM to %s: %s", user_id, exc)
+                break
+        except Exception as exc:
+            logger.debug("Failed to inspect DM history for %s: %s", user_id, exc)
+
+        try:
+            await channel.send(body)
         except Exception as exc:
             logger.error("Failed to DM holding share #%d to %s: %s", idx, user_id, exc)
             errors.append(f"dm_failed_{user_id}")
@@ -1265,9 +1285,14 @@ async def create_holding_command(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     try:
         persist = not HOLDING_TEST_MODE
-        _password, _shares, share_strings = create_holding_secret(persist=persist)
+        password, shares, share_strings = create_holding_secret(persist=persist)
         if not persist:
             logger.info("Holding account test mode active; generated transient secret without persisting.")
+            logger.info("Holding test password: %s", password)
+            for idx in range(1, HOLDING_ACCOUNT_SHARE_COUNT + 1):
+                share_text = share_strings.get(str(idx))
+                raw_share = shares.get(str(idx))
+                logger.info("Holding test share %s: %s | raw=%s", idx, share_text, raw_share)
     except FileExistsError:
         await interaction.followup.send("holding password already exists", ephemeral=True)
         return
