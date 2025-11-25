@@ -1517,31 +1517,30 @@ async def pilot_style_command(interaction: discord.Interaction, mode: app_comman
 async def kick_member_command(interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = None):
     guild = interaction.guild
     if not guild:
-        await interaction.response.send_message("this command can only be used in a server", ephemeral=True)
+        await interaction.response.send_message("this command can only be used in a server")
         return
     if member.id == interaction.user.id:
-        await interaction.response.send_message("im not kicking you", ephemeral=True)
+        await interaction.response.send_message("im not kicking you")
         return
     me = guild.me
     if me and member.id == me.id:
-        await interaction.response.send_message("im not kicking myself", ephemeral=True)
+        await interaction.response.send_message("im not kicking myself")
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     reason_text = (reason or "").strip() or f"Requested by {interaction.user} ({interaction.user.id})"
     friendly_reason = reason.strip() if reason and reason.strip() else "No reason provided"
     try:
         await member.kick(reason=reason_text)
     except discord.Forbidden:
-        await interaction.followup.send("i dont have permission to kick that member", ephemeral=True)
+        await interaction.followup.send("i dont have permission to kick that member")
         return
     except discord.HTTPException as exc:
-        await interaction.followup.send(f"failed to kick member: {exc}", ephemeral=True)
+        await interaction.followup.send(f"failed to kick member: {exc}")
         return
 
     await interaction.followup.send(
-        f"kicked {member.mention} ({member.id})\nreason: {friendly_reason}",
-        ephemeral=True,
+        f"kicked {member.mention} ({member.id})\nreason: {friendly_reason}"
     )
 
 @pres_group.command(name='ban', description='ban a member from the server')
@@ -1549,31 +1548,30 @@ async def kick_member_command(interaction: discord.Interaction, member: discord.
 async def ban_member_command(interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = None):
     guild = interaction.guild
     if not guild:
-        await interaction.response.send_message("this command can only be used in a server", ephemeral=True)
+        await interaction.response.send_message("this command can only be used in a server")
         return
     if member.id == interaction.user.id:
-        await interaction.response.send_message("im not banning you", ephemeral=True)
+        await interaction.response.send_message("im not banning you")
         return
     me = guild.me
     if me and member.id == me.id:
-        await interaction.response.send_message("im not banning myself", ephemeral=True)
+        await interaction.response.send_message("im not banning myself")
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     reason_text = (reason or "").strip() or f"Requested by {interaction.user} ({interaction.user.id})"
     friendly_reason = reason.strip() if reason and reason.strip() else "No reason provided"
     try:
         await member.ban(reason=reason_text)
     except discord.Forbidden:
-        await interaction.followup.send("i dont have permission to ban that member", ephemeral=True)
+        await interaction.followup.send("i dont have permission to ban that member")
         return
     except discord.HTTPException as exc:
-        await interaction.followup.send(f"failed to ban member: {exc}", ephemeral=True)
+        await interaction.followup.send(f"failed to ban member: {exc}")
         return
 
     await interaction.followup.send(
-        f"banned {member.mention} ({member.id})\nreason: {friendly_reason}",
-        ephemeral=True,
+        f"banned {member.mention} ({member.id})\nreason: {friendly_reason}"
     )
 
 @pres_group.command(name='setrolecolor', description='set the role color of the president role')
@@ -1581,17 +1579,17 @@ async def ban_member_command(interaction: discord.Interaction, member: discord.M
 async def set_role_color_command(interaction: discord.Interaction, hex_color: str):
     guild = interaction.guild
     if not guild:
-        await interaction.response.send_message("this command can only be used in a server", ephemeral=True)
+        await interaction.response.send_message("this command can only be used in a server")
         return
 
     color_text = hex_color.strip().lstrip('#')
     if not re.fullmatch(r'[0-9a-fA-F]{6}', color_text):
-        await interaction.response.send_message("provide a valid hex color like #ff0000", ephemeral=True)
+        await interaction.response.send_message("provide a valid hex color like #ff0000")
         return
 
     role = guild.get_role(PRESIDENT_ROLE_ID)
     if role is None:
-        await interaction.response.send_message("president role not found", ephemeral=True)
+        await interaction.response.send_message("president role not found")
         return
 
     new_color = discord.Color(int(color_text, 16))
@@ -1599,13 +1597,13 @@ async def set_role_color_command(interaction: discord.Interaction, hex_color: st
     try:
         await role.edit(color=new_color, reason=reason_text)
     except discord.Forbidden:
-        await interaction.response.send_message("i dont have permission to edit that role", ephemeral=True)
+        await interaction.response.send_message("i dont have permission to edit that role")
         return
     except discord.HTTPException as exc:
-        await interaction.response.send_message(f"failed to update role color: {exc}", ephemeral=True)
+        await interaction.response.send_message(f"failed to update role color: {exc}")
         return
 
-    await interaction.response.send_message(f"president role color set to #{color_text.lower()}", ephemeral=True)
+    await interaction.response.send_message(f"president role color set to #{color_text.lower()}")
 
 # --- New Owner Status Sync Commands ---
 @giorgioonly_group.command(name='syncme', description='pilot syncs online activity with me')
