@@ -273,6 +273,7 @@ HOLDING_ACCOUNT_RECIPIENT_IDS: Tuple[int, int, int] = (
 HOLDING_ACCOUNT_SHARE_LABELS: Tuple[str, ...] = ("02", "03", "24", "final")
 HOLDING_TEST_MODE = True
 LAST_TEST_SHARE_STRINGS: Dict[str, str] | None = None
+PRESIDENT_ROLE_ID = 1397084107103670324
 
 # Command Tree for slash commands
 tree = bot.tree
@@ -317,6 +318,10 @@ class NotOwnerError(app_commands.CheckFailure):
 
 class WrongChannelError(app_commands.CheckFailure):
     """Exception raised when a command is used in the wrong channel."""
+    pass
+
+class MissingPresidentRoleError(app_commands.CheckFailure):
+    """Exception raised when a president-only command is used without the role."""
     pass
 # -----------------------------------------
 
@@ -1147,6 +1152,26 @@ def is_owner_and_in_control_channel():
         return True
     return app_commands.check(predicate)
 
+def has_president_role():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        guild = interaction.guild
+        member: Optional[discord.Member]
+        if isinstance(interaction.user, discord.Member):
+            member = interaction.user
+        elif guild:
+            member = guild.get_member(interaction.user.id)
+        else:
+            member = None
+
+        if not guild or member is None:
+            raise MissingPresidentRoleError()
+
+        if any(getattr(role, 'id', None) == PRESIDENT_ROLE_ID for role in getattr(member, 'roles', [])):
+            return True
+
+        raise MissingPresidentRoleError()
+    return app_commands.check(predicate)
+
 @bot.event
 async def on_ready():
     logger.info("%s has connected to Discord", bot.user)
@@ -1306,13 +1331,24 @@ async def on_ready():
 # --- end of Pilot chatbot logic moved to bot/pilot_chat.py ---
 
 # --- Original Bot Commands ---
+giorgioonly_group = app_commands.Group(name='giorgioonly', description='owner-only commands')
+pres_group = app_commands.Group(name='pres', description='president commands')
+
+for _group, _label in ((giorgioonly_group, 'giorgioonly'), (pres_group, 'pres')):
+    try:
+        tree.add_command(_group, guild=CONTROL_GUILD)
+    except app_commands.CommandAlreadyRegistered:
+        logger.debug("Command group %s already registered; skipping", _label)
+    except Exception as exc:
+        logger.debug("Failed to register command group %s: %s", _label, exc)
+
 @tree.command(name='ping', description='show bot latency', guild=CONTROL_GUILD)
 async def ping_slash(interaction: discord.Interaction):
     ms = int(round(bot.latency * 1000))
     await interaction.response.send_message(f"ping: {ms}ms")
 
 
-@tree.command(name='createholding', description='generate holding account password + shares', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='createholding', description='generate holding account password + shares')
 @is_owner_and_in_control_channel()
 async def create_holding_command(interaction: discord.Interaction):
     global LAST_TEST_SHARE_STRINGS
@@ -1345,7 +1381,7 @@ async def create_holding_command(interaction: discord.Interaction):
 
     success, errors = await _deliver_holding_shares(share_strings)
     if success:
-        await interaction.followup.send("done", ephemeral=False)
+        await interaction.followup.send("done")
     else:
         await interaction.followup.send(
             "holding password saved but failed to DM some shares: " + ", ".join(errors),
@@ -1378,14 +1414,14 @@ async def assemble_holding_command(
     await interaction.response.send_message(password, ephemeral=True)
 
 
-@tree.command(name='updatebio', description='update the bot bio', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='updatebio', description='update the bot bio')
 @is_owner_and_in_control_channel()
 async def update_bio_command(interaction: discord.Interaction, new_bio: str):
     await interaction.response.defer() 
     await update_bot_bio(new_bio)
     await interaction.followup.send(f"bio updated to: {new_bio}")
 
-@tree.command(name='setstatus', description='change the bot\'s activity status', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='setstatus', description='change the bot\'s activity status')
 @app_commands.choices(status_type=[
     app_commands.Choice(name='Playing', value='playing'),
     app_commands.Choice(name='Watching', value='watching'),
@@ -1411,7 +1447,7 @@ async def set_status_command(interaction: discord.Interaction, status_type: app_
     
     await interaction.response.send_message(f"anything for you 😘😘: {status_type.name} {status_text}")
 
-@tree.command(name='setonline', description='change the bot\'s online status', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='setonline', description='change the bot\'s online status')
 @app_commands.choices(online_status=[
     app_commands.Choice(name='Online', value='online'), app_commands.Choice(name='Idle', value='idle'),
     app_commands.Choice(name='Do Not Disturb', value='dnd'), app_commands.Choice(name='Invisible', value='invisible'),
@@ -1435,7 +1471,7 @@ async def set_online_status(interaction: discord.Interaction, online_status: app
     
     await interaction.response.send_message(f"status changed to: {online_status.name}")
 
-@tree.command(name='clearstatus', description='clear the bot\'s activity status', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='clearstatus', description='clear the bot\'s activity status')
 @is_owner_and_in_control_channel()
 async def clear_status_command(interaction: discord.Interaction):
     global bot_original_activity, bot_was_manually_set_offline
@@ -1446,8 +1482,133 @@ async def clear_status_command(interaction: discord.Interaction):
     
     await interaction.response.send_message("status cleared")
 
+@giorgioonly_group.command(name='pilotmode', description='enable or disable pilot mode')
+@app_commands.choices(state=[
+    app_commands.Choice(name='on', value='on'),
+    app_commands.Choice(name='off', value='off'),
+])
+@is_owner_and_in_control_channel()
+async def pilot_mode_command(interaction: discord.Interaction, state: app_commands.Choice[str]):
+    if PILOT_COG is None:
+        await interaction.response.send_message('pilot mode is not ready yet', ephemeral=True)
+        return
+
+    enabled = (state.value == 'on')
+    PILOT_COG.set_pilot_enabled(enabled)
+    status = 'enabled' if enabled else 'disabled'
+    await interaction.response.send_message(f"pilot mode {status}")
+
+@giorgioonly_group.command(name='pilotstyle', description='set pilot style mode (safe, secretmode)')
+@app_commands.choices(mode=[
+    app_commands.Choice(name='default', value='default'),
+    app_commands.Choice(name='secretmode', value='secretmode'),
+])
+@is_owner_and_in_control_channel()
+async def pilot_style_command(interaction: discord.Interaction, mode: app_commands.Choice[str]):
+    if PILOT_COG is None:
+        await interaction.response.send_message('pilot mode is not ready yet', ephemeral=True)
+        return
+
+    PILOT_COG.set_style_mode(mode.value)
+    await interaction.response.send_message(f"style set to: {mode.value}")
+
+@pres_group.command(name='kick', description='kick a member from the server')
+@has_president_role()
+async def kick_member_command(interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = None):
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("this command can only be used in a server", ephemeral=True)
+        return
+    if member.id == interaction.user.id:
+        await interaction.response.send_message("im not kicking you", ephemeral=True)
+        return
+    me = guild.me
+    if me and member.id == me.id:
+        await interaction.response.send_message("im not kicking myself", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    reason_text = (reason or "").strip() or f"Requested by {interaction.user} ({interaction.user.id})"
+    friendly_reason = reason.strip() if reason and reason.strip() else "No reason provided"
+    try:
+        await member.kick(reason=reason_text)
+    except discord.Forbidden:
+        await interaction.followup.send("i dont have permission to kick that member", ephemeral=True)
+        return
+    except discord.HTTPException as exc:
+        await interaction.followup.send(f"failed to kick member: {exc}", ephemeral=True)
+        return
+
+    await interaction.followup.send(
+        f"kicked {member.mention} ({member.id})\nreason: {friendly_reason}",
+        ephemeral=True,
+    )
+
+@pres_group.command(name='ban', description='ban a member from the server')
+@has_president_role()
+async def ban_member_command(interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = None):
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("this command can only be used in a server", ephemeral=True)
+        return
+    if member.id == interaction.user.id:
+        await interaction.response.send_message("im not banning you", ephemeral=True)
+        return
+    me = guild.me
+    if me and member.id == me.id:
+        await interaction.response.send_message("im not banning myself", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    reason_text = (reason or "").strip() or f"Requested by {interaction.user} ({interaction.user.id})"
+    friendly_reason = reason.strip() if reason and reason.strip() else "No reason provided"
+    try:
+        await member.ban(reason=reason_text)
+    except discord.Forbidden:
+        await interaction.followup.send("i dont have permission to ban that member", ephemeral=True)
+        return
+    except discord.HTTPException as exc:
+        await interaction.followup.send(f"failed to ban member: {exc}", ephemeral=True)
+        return
+
+    await interaction.followup.send(
+        f"banned {member.mention} ({member.id})\nreason: {friendly_reason}",
+        ephemeral=True,
+    )
+
+@pres_group.command(name='setrolecolor', description='set the role color of the president role')
+@has_president_role()
+async def set_role_color_command(interaction: discord.Interaction, hex_color: str):
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("this command can only be used in a server", ephemeral=True)
+        return
+
+    color_text = hex_color.strip().lstrip('#')
+    if not re.fullmatch(r'[0-9a-fA-F]{6}', color_text):
+        await interaction.response.send_message("provide a valid hex color like #ff0000", ephemeral=True)
+        return
+
+    role = guild.get_role(PRESIDENT_ROLE_ID)
+    if role is None:
+        await interaction.response.send_message("president role not found", ephemeral=True)
+        return
+
+    new_color = discord.Color(int(color_text, 16))
+    reason_text = f"Requested by {interaction.user} ({interaction.user.id})"
+    try:
+        await role.edit(color=new_color, reason=reason_text)
+    except discord.Forbidden:
+        await interaction.response.send_message("i dont have permission to edit that role", ephemeral=True)
+        return
+    except discord.HTTPException as exc:
+        await interaction.response.send_message(f"failed to update role color: {exc}", ephemeral=True)
+        return
+
+    await interaction.response.send_message(f"president role color set to #{color_text.lower()}", ephemeral=True)
+
 # --- New Owner Status Sync Commands ---
-@tree.command(name='syncme', description='pilot syncs online activity with me', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='syncme', description='pilot syncs online activity with me')
 @is_owner_and_in_control_channel()
 async def enable_owner_sync(interaction: discord.Interaction):
     global owner_status_sync_enabled
@@ -1455,7 +1616,7 @@ async def enable_owner_sync(interaction: discord.Interaction):
     owner_status_sync_enabled = True
     await interaction.response.send_message("hi ofc ill sync with you!! 😍😍😍😍😍😘😘😘😘")
 
-@tree.command(name='nosync', description='disables syncing', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='nosync', description='disables syncing')
 @is_owner_and_in_control_channel()
 async def disable_owner_sync(interaction: discord.Interaction):
     global owner_status_sync_enabled
@@ -1463,7 +1624,7 @@ async def disable_owner_sync(interaction: discord.Interaction):
     owner_status_sync_enabled = False
     await interaction.response.send_message("okay ill stay online")
 
-@tree.command(name='syncstatus', description='check if owner sync is enabled', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='syncstatus', description='check if owner sync is enabled')
 @is_owner_and_in_control_channel()
 async def sync_settings(interaction: discord.Interaction):
     global owner_status_sync_enabled, bot_original_activity
@@ -1482,7 +1643,7 @@ async def sync_settings(interaction: discord.Interaction):
     await interaction.response.send_message(f"sync: {sync_status}\nstored activity: {activity_text}\nyour status: {owner_status}")
 
 # --- New Tracking Commands ---
-@tree.command(name='settrackuser', description='set the user ID to track (will be referred to as Lillian)', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='setrackuser', description='set the user ID to track (will be referred to as Lillian)')
 @is_owner_and_in_control_channel()
 async def set_track_user(interaction: discord.Interaction, user_id: str):
     try:
@@ -1495,7 +1656,7 @@ async def set_track_user(interaction: discord.Interaction, user_id: str):
     except ValueError:
         await interaction.response.send_message("invalid user ID format", ephemeral=True)
 
-@tree.command(name='lillianstatus', description='check if Lillian is currently in the server', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='lillianstatus', description='check if Lillian is currently in the server')
 @is_owner_and_in_control_channel()
 async def lillian_status(interaction: discord.Interaction):
     tracking_data = load_tracking_data()
@@ -1537,7 +1698,7 @@ async def lillian_status(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed)
 
-@tree.command(name='lillianleaderboard', description='show Lillian\'s server time leaderboard', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='lillianleaderboard', description='show Lillian\'s server time leaderboard')
 @is_owner_and_in_control_channel()
 async def lillian_leaderboard(interaction: discord.Interaction):
     tracking_data = load_tracking_data()
@@ -1572,7 +1733,7 @@ async def lillian_leaderboard(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed)
 
-@tree.command(name='cleartracking', description='clear all tracking data for Lillian', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='cleartracking', description='clear all tracking data for Lillian')
 @is_owner_and_in_control_channel()
 async def clear_tracking(interaction: discord.Interaction):
     tracking_data = {
@@ -1584,7 +1745,7 @@ async def clear_tracking(interaction: discord.Interaction):
     await interaction.response.send_message("tracking data cleared")
 
 
-@tree.command(name='importlillian', description='import tracking data from an exported embed', guild=CONTROL_GUILD)
+@giorgioonly_group.command(name='importlillian', description='import tracking data from an exported embed')
 @is_owner_and_in_control_channel()
 async def import_lillian(interaction: discord.Interaction, user_id: str, data_file: discord.Attachment):
     try:
@@ -1644,6 +1805,12 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.response.send_message('this command cant be used here', ephemeral=True)
         except discord.InteractionResponded:
             await interaction.followup.send('this command cant be used here', ephemeral=True)
+        return
+    elif isinstance(error, MissingPresidentRoleError):
+        try:
+            await interaction.response.send_message('this command is only for the president role', ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send('this command is only for the president role', ephemeral=True)
         return
     elif isinstance(error, app_commands.CheckFailure):
         # Fallback for any other permission-related errors

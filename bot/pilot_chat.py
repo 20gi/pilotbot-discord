@@ -5,7 +5,6 @@ from typing import List, Dict, Optional
 
 import aiohttp
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 
@@ -33,13 +32,6 @@ class PilotChatCog(commands.Cog):
         self.style_mode: str = str(config.get('pilot_style_mode', 'default'))  # default | seductive
 
         self.owner_username: Optional[str] = None
-
-        # Register slash command to the guild
-        try:
-            self.bot.tree.add_command(self.pilotmode, guild=self.control_guild)
-            self.bot.tree.add_command(self.pilotstyle, guild=self.control_guild)
-        except Exception as e:
-            logging.debug(f"pilot_chat: add_command duplicate or error ignored: {e}")
 
         # Verbose startup logging of configuration
         logging.info(
@@ -232,41 +224,13 @@ class PilotChatCog(commands.Cog):
                     pass
                 logging.exception("Pilot LLM error")
 
-    @app_commands.command(name='pilotmode', description='enable or disable pilot mode')
-    @app_commands.choices(state=[
-        app_commands.Choice(name='on', value='on'),
-        app_commands.Choice(name='off', value='off'),
-    ])
-    async def pilotmode(self, interaction: discord.Interaction, state: app_commands.Choice[str]):
-        # Permission checks inline (owner + control channel)
-        if self.bot.owner_id is None or interaction.user.id != self.bot.owner_id:
-            await interaction.response.send_message('ew who are you', ephemeral=True)
-            return
-        if interaction.channel_id != self.control_channel_id:
-            await interaction.response.send_message('this command cant be used here', ephemeral=True)
-            return
+    def set_pilot_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+        logging.info("pilot_chat: mode set to %s", 'enabled' if enabled else 'disabled')
 
-        self.enabled = (state.value == 'on')
-        status = 'enabled' if self.enabled else 'disabled'
-        await interaction.response.send_message(f"limit: {self.history_limit}")
-
-    @app_commands.command(name='pilotstyle', description='set pilot style mode (safe, secretmode)')
-    @app_commands.choices(mode=[
-        app_commands.Choice(name='default', value='default'),
-        app_commands.Choice(name='secretmode', value='secretmode'),
-    ])
-    async def pilotstyle(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
-        # Owner + control channel restriction
-        if self.bot.owner_id is None or interaction.user.id != self.bot.owner_id:
-            await interaction.response.send_message('ew who are you', ephemeral=False)
-            return
-        if interaction.channel_id != self.control_channel_id:
-            await interaction.response.send_message('this command cant be used here', ephemeral=True)
-            return
-
-        self.style_mode = mode.value
-        logging.info("Pilot style_mode set to %s by %s", self.style_mode, getattr(interaction.user, 'name', 'unknown'))
-        await interaction.response.send_message(f"style set to: {self.style_mode}")
+    def set_style_mode(self, mode: str) -> None:
+        self.style_mode = mode
+        logging.info("pilot_chat: style_mode set to %s", self.style_mode)
 
     async def generate_web_reply(
         self,
