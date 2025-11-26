@@ -1361,6 +1361,7 @@ async def create_holding_command(interaction: discord.Interaction):
         persist = not HOLDING_TEST_MODE
         password, shares, share_strings = create_holding_secret(persist=persist)
         if persist:
+            logger.info("Generated holding password: %s", password)
             LAST_TEST_SHARE_STRINGS = None
         else:
             LAST_TEST_SHARE_STRINGS = dict(share_strings)
